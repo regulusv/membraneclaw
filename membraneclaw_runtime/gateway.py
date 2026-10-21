@@ -84,7 +84,7 @@ class ModelGateway:
 
     @classmethod
     async def start(cls, store, adapter, transport, route, *, role="solver", budget=None, retry=None,
-                    tenant="local", run_id=None, **test_controls):
+                    tenant="local", run_id=None, context=None, **test_controls):
         budget, retry = budget or Budget(), retry or RetryPolicy()
         budget.validate()
         retry.validate()
@@ -94,7 +94,7 @@ class ModelGateway:
             raise ConfigurationError("adapter does not match route")
         metadata = {"route": asdict(route), "adapter_version": adapter.adapter_version,
                     "role": role, "budget": asdict(budget), "retry": asdict(retry),
-                    "gateway_version": "gateway_v1"}
+                    "gateway_version": "gateway_v1", "context": copy.deepcopy(context or {})}
         CapturePolicy(transport.authentication_values).check(metadata)
         recorder = await disk(TraceRecorder.begin_episode, store, metadata, tenant=tenant, run_id=run_id)
         return cls(recorder, adapter, transport, route, role=role, budget=budget, retry=retry, **test_controls)
