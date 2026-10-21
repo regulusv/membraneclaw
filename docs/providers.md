@@ -199,8 +199,9 @@ Optional token budgeting requires an explicit output cap and a trusted upper
 bound for the ENTIRE input request, including native history/system/tools.
 The gateway reserves input upper bound + output cap before EVERY attempt,
 retains reservations for uncertain/failed requests, and does not release them
-when a later attempt succeeds. Observed provider totals are also considered
-before subsequent reservations. This is conservative admission control, not a
+when a later attempt succeeds. Each attempt is accounted as the greater of its reservation and known actual
+usage; these per-attempt debits are summed before subsequent admission. Known
+overruns and separate unknown-usage reservations therefore both remain charged. This is conservative admission control, not a
 guarantee against inaccurate caller bounds or unexpected service accounting.
 No pricing/fee estimates are fabricated.
 

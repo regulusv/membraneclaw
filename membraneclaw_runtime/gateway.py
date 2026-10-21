@@ -75,7 +75,7 @@ class ModelGateway:
         self.policy = CapturePolicy(transport.authentication_values)
         self.sleep, self.clock, self.jitter = sleep, clock, jitter
         self.started_at = clock()
-        self.requests_used = self.tokens_reserved = self.tokens_observed = 0
+        self.requests_used = self.tokens_reserved = self.tokens_observed = self.tokens_accounted = 0
         self.usage_unknown = False
         self.capture, self.external_outcome = "complete", "known"
         self._owner = self._last_output = None
@@ -134,7 +134,8 @@ class ModelGateway:
                              "provider_state": (state or self.state).to_document(),
                              "budget": asdict(self.budget), "retry": asdict(self.retry),
                              "requests_used": self.requests_used, "tokens_reserved": self.tokens_reserved,
-                             "tokens_observed": self.tokens_observed, "usage_unknown": self.usage_unknown,
+                             "tokens_observed": self.tokens_observed, "tokens_accounted": self.tokens_accounted,
+                             "usage_unknown": self.usage_unknown,
                              "capture": self.capture, "external_outcome": self.external_outcome})
 
     def _reserve(self, request):
@@ -147,11 +148,12 @@ class ModelGateway:
             if type(bound) is not int or bound < 0 or request.max_output_tokens is None:
                 raise ConfigurationError("token budget requires trusted input upper bound and output limit")
             reserve = bound + request.max_output_tokens
-            if max(self.tokens_reserved, self.tokens_observed) + reserve > self.budget.max_total_tokens:
+            if self.tokens_accounted + reserve > self.budget.max_total_tokens:
                 raise BudgetExceeded("token reservation budget exhausted")
         self.requests_used += 1
         self.tokens_reserved += reserve
-        return min(self.budget.attempt_timeout_seconds, remaining)
+        self.tokens_accounted += reserve
+        return min(self.budget.attempt_timeout_seconds, remaining), reserve
 
     def _delay(self, attempt, retry_after):
         if retry_after:
@@ -181,7 +183,7 @@ class ModelGateway:
         model_call_id = uuid4().hex
         for attempt in range(1, self.retry.max_attempts + 1):
             try:
-                timeout = self._reserve(request)
+                timeout, reservation = self._reserve(request)
             except BudgetExceeded:
                 self._failed = True
                 await self._record("budget.exhausted", checkpoint=self._snapshot(),
@@ -271,6 +273,7 @@ class ModelGateway:
                     self.usage_unknown = True
                 else:
                     self.tokens_observed += output.usage.total_tokens
+                    self.tokens_accounted += max(0, output.usage.total_tokens - reservation)
                 await self._record("model.completed", payload=Payload.json({
                     "text_blocks": [asdict(b) for b in output.text_blocks],
                     "thought_summaries": list(output.thought_summaries),

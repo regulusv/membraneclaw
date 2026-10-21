@@ -330,3 +330,20 @@ class UncertainServiceFailure(unittest.IsolatedAsyncioTestCase):
         await gw.finish()
         self.assertEqual(store.read_episode(gw.recorder.episode).completeness["external_outcome"], "unknown")
         self.assertTrue(gw.usage_unknown)
+
+
+class ConservativeTokenAccounting(unittest.IsolatedAsyncioTestCase):
+    async def test_known_overrun_and_unknown_usage_are_both_retained(self):
+        high = json.loads(final().body)
+        high["usageMetadata"]["totalTokenCount"] = 12
+        transport = ScriptedTransport([NativeResponse(200, {}, canonical_json(high)), final(usage=False), final()])
+        gw = await ModelGateway.start(MemoryTraceStore(), GeminiAdapter(), transport, ROUTE,
+                                      budget=Budget(max_total_tokens=35), sleep=no_wait)
+        await gw.generate(request(max_output_tokens=8, input_token_upper_bound=2))
+        await gw.generate(request(max_output_tokens=8, input_token_upper_bound=2))
+        self.assertEqual(gw.tokens_reserved, 20)
+        self.assertEqual(gw.tokens_observed, 12)
+        self.assertEqual(gw.tokens_accounted, 22)
+        with self.assertRaises(BudgetExceeded):
+            await gw.generate(request(max_output_tokens=8, input_token_upper_bound=7))
+        self.assertEqual(len(transport.calls), 2)
