@@ -20,3 +20,6 @@ var/traces/
 *.egg-info/
 build/
 dist/
+
+# Archive worker checkouts and receipts may contain private snapshots.
+var/trace-archive/
