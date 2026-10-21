@@ -347,3 +347,49 @@ class ConservativeTokenAccounting(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(BudgetExceeded):
             await gw.generate(request(max_output_tokens=8, input_token_upper_bound=7))
         self.assertEqual(len(transport.calls), 2)
+
+
+class CancellationAtCommit(unittest.IsolatedAsyncioTestCase):
+    async def test_cancellation_during_final_commit_cannot_start_another_request(self):
+        import threading
+        committed, release = threading.Event(), threading.Event()
+        class PausedStore(MemoryTraceStore):
+            def _update_manifest(self, ep):
+                if ep.events and ep.events[-1]["type"] == "model.completed":
+                    committed.set()
+                    if not release.wait(3):
+                        raise OSError("synthetic test timeout")
+        store = PausedStore()
+        transport = ScriptedTransport([final(), final()])
+        gw = await ModelGateway.start(store, GeminiAdapter(), transport, ROUTE)
+        task = asyncio.create_task(gw.generate(request()))
+        try:
+            self.assertTrue(await asyncio.to_thread(committed.wait, 3))
+            task.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            with self.assertRaises(ConfigurationError):
+                await gw.generate(request())
+            self.assertEqual(len(transport.calls), 1)
+            await gw.finish("cancelled")
+            self.assertEqual(store.read_episode(gw.recorder.episode).completeness["capture"], "partial")
+        finally:
+            release.set()
+
+    async def test_cancellation_during_backoff_is_not_a_silent_new_attempt(self):
+        waiting = asyncio.Event()
+        async def wait(_):
+            waiting.set()
+            await asyncio.Event().wait()
+        store = MemoryTraceStore()
+        transport = ScriptedTransport([NativeResponse(429, {}, b"busy"), final()])
+        gw = await ModelGateway.start(store, GeminiAdapter(), transport, ROUTE, sleep=wait)
+        task = asyncio.create_task(gw.generate(request()))
+        await asyncio.wait_for(waiting.wait(), 3)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        with self.assertRaises(ConfigurationError):
+            await gw.generate(request())
+        self.assertEqual(len(transport.calls), 1)

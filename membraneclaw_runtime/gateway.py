@@ -123,6 +123,10 @@ class ModelGateway:
                 if item is not None:
                     self.policy.check(item.data)
             await disk(self.recorder.append_event, event, payload=payload, checkpoint=checkpoint)
+        except asyncio.CancelledError:
+            self._failed = True
+            self.capture, self.external_outcome = "partial", "unknown"
+            raise
         except Exception:
             self._failed = True
             self.capture, self.external_outcome = "partial", "unknown"
@@ -299,7 +303,13 @@ class ModelGateway:
                 await self._record("budget.exhausted", checkpoint=self._snapshot(), **ids)
                 raise BudgetExceeded("retry delay exceeds remaining time budget")
             await self._record("attempt.retry_scheduled", data={"delay_seconds": delay}, **ids)
-            await self.sleep(delay)
+            try:
+                await self.sleep(delay)
+            except asyncio.CancelledError:
+                self._failed = True
+                self.capture, self.external_outcome = "partial", "unknown"
+                await self._record("attempt.cancelled", checkpoint=self._snapshot(), **ids)
+                raise
         raise AssertionError("unreachable")
 
     async def add_tool_results(self, results):
