@@ -11,6 +11,15 @@ class ProviderRegistry:
             raise ConfigurationError("provider already registered")
         self._factories[provider] = factory
 
+    def create_for_model(self, provider, model):
+        from .types import ModelRoute
+        factory = self._factories.get(provider)
+        if factory is None:
+            raise ConfigurationError("provider is not registered")
+        adapter = factory()
+        adapter.capabilities(model)
+        return adapter, ModelRoute(provider, model, adapter.api_family)
+
     def create(self, route):
         factory = self._factories.get(route.provider)
         if factory is None:

@@ -118,8 +118,8 @@ arrays at an explicit serialization boundary without weakening canonical_json_v1
 
 Tool definitions use a conservative JSON Schema subset and the REST
 `parametersJsonSchema` field. Supported keywords are type, description,
-properties, required, items, enum, boolean additionalProperties, minimum,
-maximum, minItems and maxItems. Unsupported keywords, duplicate/invalid portable
+properties, required, items, enum, boolean/schema additionalProperties, minimum,
+maximum, minItems, maxItems, title and default. Unsupported keywords, duplicate/invalid portable
 names or foreign provider options fail explicitly; no constraints are dropped.
 The portable tool-name limit is intentionally narrower than Gemini's native
 limit. Name mapping and argument validation/execution belong to PR 5.
