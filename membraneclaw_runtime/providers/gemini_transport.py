@@ -122,3 +122,7 @@ class GeminiTransport:
             raise TransportError("request_timeout") from None
         await after_receive(response)  # No JSON parsing has occurred.
         return response
+
+    async def exchange_stream(self, request, **kwargs):
+        from ..streaming import exchange_stream
+        return await exchange_stream(self, request, **kwargs)

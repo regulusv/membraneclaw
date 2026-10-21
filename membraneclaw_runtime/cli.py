@@ -76,7 +76,7 @@ async def run_traced(args, prompt):
             trace_backend=args.trace_backend, trace_dir=args.trace_dir, prompt=prompt,
             no_mcp=args.no_mcp, google_token_path=token_path, limits=limits, budget=budget) as runtime:
         print(f"episode={runtime.gateway.recorder.episode.episode_id} provider={args.provider}", flush=True)
-        result = await runtime.run()
+        result = await runtime.run(stream=args.stream)
         if result.text:
             print(result.text)
         print(f"episode={result.episode_id} status={result.status} reason={result.reason}")
@@ -99,6 +99,7 @@ def main(argv=None):
     parser.add_argument("--max-requests", type=int, default=36)
     parser.add_argument("--max-seconds", type=float, default=300)
     parser.add_argument("--parallel-read-only", action="store_true")
+    parser.add_argument("--stream", action="store_true", help="Use durably captured native SSE")
     parser.add_argument("--no-mcp", action="store_true")
     parser.add_argument("--google-tools", action="store_true", help="Bind Google tools to this CLI operator")
     args = parser.parse_args(argv)

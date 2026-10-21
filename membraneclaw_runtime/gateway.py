@@ -176,15 +176,18 @@ class ModelGateway:
         return min(self.retry.max_delay_seconds,
                    self.retry.base_delay_seconds * 2 ** min(attempt - 1, 20) * (1 + self.jitter()))
 
-    async def generate(self, request):
+    async def generate(self, request, *, stream=False, on_frame=None):
         if self._owner is None:
             async with self.execution():
-                return await self.generate(request)
+                return await self.generate(request, stream=stream, on_frame=on_frame)
         if self._owner is not asyncio.current_task() or self._failed:
             raise ConfigurationError("gateway busy or failed; start a new episode")
         if request.route != self.route:
             raise ConfigurationError("route change requires a new episode")
         native = self.adapter.prepare(request, self.state)
+        if stream:
+            from .streaming import prepare_request
+            native = prepare_request(native)
         self.policy.check(native.body)
         model_call_id = uuid4().hex
         for attempt in range(1, self.retry.max_attempts + 1):
@@ -229,13 +232,31 @@ class ModelGateway:
                 payload = Payload(response.body)
                 await self._record("attempt.response", payload=payload,
                                    data={"status": response.status, "headers": response.headers,
-                                         "complete": response.complete, "error_code": response.error_code}, **ids)
+                                         "complete": response.complete, "error_code": response.error_code,
+                                         "derived_stream_aggregate": stream}, **ids)
                 captured_response, response_ref = copy.deepcopy(response), payload.ref(self.recorder.episode)
+
+            frame_count = 0
+            async def capture_frame(frame):
+                nonlocal frame_count
+                if not captured_request or captured_response is not None or frame.sequence != frame_count:
+                    raise ProtocolError("invalid stream capture order")
+                await self._record("stream.frame", payload=Payload(frame.body),
+                                   data={"sequence":frame.sequence, "received_at":frame.received_at,
+                                         "complete_frame":frame.complete}, **ids)
+                frame_count += 1
+                if on_frame is not None:
+                    await on_frame(frame)
 
             response = None
             try:
-                response = await self.transport.exchange(native, before_send=before_send,
-                                                          after_receive=after_receive, timeout=timeout)
+                if stream:
+                    response = await self.transport.exchange_stream(native, before_send=before_send,
+                        after_receive=after_receive, on_frame=capture_frame, timeout=timeout)
+                    await self._record("stream.eof", data={"frames":frame_count, "complete":response.complete}, **ids)
+                else:
+                    response = await self.transport.exchange(native, before_send=before_send,
+                                                              after_receive=after_receive, timeout=timeout)
                 if not captured_request or captured_response is None or response != captured_response:
                     raise ProtocolError("transport bypassed or changed mandatory capture")
             except TraceStorageError:
@@ -252,7 +273,7 @@ class ModelGateway:
                 self.usage_unknown = True
                 await self._record("attempt.failed", checkpoint=self._snapshot(),
                                    data={"error_code": error.code, "external_outcome": "unknown"}, **ids)
-                if not captured_request or not self.retry.retry_timeouts or attempt == self.retry.max_attempts:
+                if (stream and frame_count) or not captured_request or not self.retry.retry_timeouts or attempt == self.retry.max_attempts:
                     self._failed = True
                     raise
             except Exception:
