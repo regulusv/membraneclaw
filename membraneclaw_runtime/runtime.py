@@ -121,7 +121,7 @@ class AgentRuntime:
         self.pending = []
         return True
 
-    async def run(self):
+    async def run(self, *, stream=False, on_frame=None):
         if self._used:
             raise ConfigurationError("runtime episodes are single-use; create a new runtime")
         self._used = True
@@ -139,7 +139,7 @@ class AgentRuntime:
                         return await self._finish("failed", "context_byte_budget_exhausted")
                     self.steps += 1
                     self._state()
-                    output = await self.gateway.generate(request)
+                    output = await self.gateway.generate(request, stream=stream, on_frame=on_frame)
                     self.current_model_call_id = output.model_call_id
                     if output.finish_status == "completed" and not output.tool_calls:
                         return await self._finish("completed", "model_completed", output.text)
