@@ -164,3 +164,17 @@ class AdapterContracts(unittest.TestCase):
         with self.assertRaises(ConfigurationError):
             registry.register("gemini", GeminiAdapter)
         self.assertFalse(self.adapter.capabilities(ROUTE.model).streaming)
+
+
+class StateSerialization(unittest.TestCase):
+    def test_native_state_has_an_explicit_json_document_boundary(self):
+        adapter = GeminiAdapter()
+        state = adapter.initial_state(ROUTE.model)
+        canonical_json(state.to_document())
+        native = adapter.prepare(request(), state)
+        out = adapter.normalize(response(), native, response_ref="synthetic", model_call_id="logical")
+        advanced = adapter.advance(state, out)
+        document = strict_json(canonical_json(advanced.to_document()))
+        self.assertIsInstance(document["native_history"], list)
+        self.assertIsInstance(document["pending_calls"], list)
+        self.assertEqual(document["native_history"][1]["parts"][0]["thoughtSignature"], "AQID+/==")

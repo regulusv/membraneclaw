@@ -1,7 +1,7 @@
 """Provider-neutral values; native state is authoritative, normalized fields are views."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Literal
 
 
@@ -105,6 +105,12 @@ class ProviderState:
     pending_calls: tuple[ToolCall, ...] = ()
     config_hash: str | None = None
     schema_version: int = 1
+
+    def to_document(self):
+        document = asdict(self)
+        document["native_history"] = list(document["native_history"])
+        document["pending_calls"] = list(document["pending_calls"])
+        return document
 
 
 @dataclass(frozen=True)

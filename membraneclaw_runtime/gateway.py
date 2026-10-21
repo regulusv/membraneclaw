@@ -131,7 +131,7 @@ class ModelGateway:
 
     def _snapshot(self, state=None):
         return Payload.json({"gateway_version": "gateway_v1", "role": self.role,
-                             "provider_state": asdict(state or self.state),
+                             "provider_state": (state or self.state).to_document(),
                              "budget": asdict(self.budget), "retry": asdict(self.retry),
                              "requests_used": self.requests_used, "tokens_reserved": self.tokens_reserved,
                              "tokens_observed": self.tokens_observed, "usage_unknown": self.usage_unknown,
