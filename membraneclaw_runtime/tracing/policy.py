@@ -23,6 +23,10 @@ class CapturePolicy:
         if any(not isinstance(v, bytes) for v in self._values):
             raise ValueError("authentication values must be strings/bytes")
 
+    def register_authentication_values(self, values):
+        extra = CapturePolicy(values)
+        self._values = tuple(dict.fromkeys(self._values + extra._values))
+
     def check(self, value):
         raw = value if isinstance(value, bytes) else canonical_json(value)
         if any(secret in raw for secret in self._values):

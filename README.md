@@ -625,3 +625,7 @@ yet change the existing Qwen agent path.
 The traced Gemini adapter and mandatory model gateway are documented in
 [providers.md](docs/providers.md). They are available as a standalone library;
 the existing agent CLI and HTTP server still use their original Qwen path.
+
+The provider-neutral tool loop and CLI are available on the runtime branch;
+see [runtime setup and behavior](docs/runtime.md). Select Gemini explicitly with
+`--provider gemini --model gemini-2.5-flash`. Qwen remains the default CLI provider.

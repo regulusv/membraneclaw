@@ -80,6 +80,7 @@ class ModelGateway:
         self.capture, self.external_outcome = "complete", "known"
         self._owner = self._last_output = None
         self._failed = False
+        self.application_state = {}
 
     @classmethod
     async def start(cls, store, adapter, transport, route, *, role="solver", budget=None, retry=None,
@@ -136,6 +137,7 @@ class ModelGateway:
     def _snapshot(self, state=None):
         return Payload.json({"gateway_version": "gateway_v1", "role": self.role,
                              "provider_state": (state or self.state).to_document(),
+                             "application_state": copy.deepcopy(self.application_state),
                              "budget": asdict(self.budget), "retry": asdict(self.retry),
                              "requests_used": self.requests_used, "tokens_reserved": self.tokens_reserved,
                              "tokens_observed": self.tokens_observed, "tokens_accounted": self.tokens_accounted,
@@ -323,6 +325,28 @@ class ModelGateway:
                            checkpoint=self._snapshot(new))
         self.state = new
         return self.state
+
+    def register_authentication_values(self, values):
+        self.policy.register_authentication_values(values)
+
+    async def record_event(self, kind, *, payload=None, data=None, tool_call_id=None, model_call_id=None):
+        if self._owner is not asyncio.current_task() or kind.startswith("episode."):
+            raise ConfigurationError("application events require execution ownership")
+        return await self._record(kind, payload=payload, data=data, checkpoint=self._snapshot(),
+                                  tool_call_id=tool_call_id, model_call_id=model_call_id)
+
+    def set_application_state(self, state):
+        if self._owner is not asyncio.current_task():
+            raise ConfigurationError("application state requires execution ownership")
+        value = Payload.json(state)
+        self.policy.check(value.data)
+        self.application_state = copy.deepcopy(state)
+
+    def remaining_seconds(self):
+        return self.budget.max_elapsed_seconds - (self.clock() - self.started_at)
+
+    def mark_external_unknown(self):
+        self.capture, self.external_outcome = "partial", "unknown"
 
     async def finish(self, status="completed"):
         if self._owner is None:

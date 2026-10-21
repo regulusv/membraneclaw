@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import math
 import re
 from dataclasses import replace
@@ -12,28 +11,13 @@ from .types import (Capabilities, ConfigurationError, ContentBlock, ModelOutput,
                     ModelRoute, NativeRequest, ProtocolError, ProviderState, ToolCall, Usage)
 
 
-def strict_json(data):
-    def pairs(values):
-        result = {}
-        for key, value in values:
-            if key in result:
-                raise ValueError("duplicate JSON key")
-            result[key] = value
-        return result
-    def invalid(_):
-        raise ValueError("non-finite JSON number")
-    try:
-        value = json.loads(data, object_pairs_hook=pairs, parse_constant=invalid)
-        canonical_json(value)
-        return value
-    except (ValueError, UnicodeError, RecursionError):
-        raise ProtocolError("invalid provider JSON") from None
+from .json_utils import strict_json
 
 
 def validate_schema(schema):
     """Conservative subset, preserved unchanged in parametersJsonSchema."""
     allowed = {"type", "description", "properties", "required", "items", "enum",
-               "additionalProperties", "minimum", "maximum", "minItems", "maxItems"}
+               "additionalProperties", "minimum", "maximum", "minItems", "maxItems", "default", "title"}
     if not isinstance(schema, dict) or set(schema) - allowed:
         raise ConfigurationError("unsupported tool schema keyword")
     kind = schema.get("type")
@@ -58,8 +42,14 @@ def validate_schema(schema):
             raise ConfigurationError("required property not declared")
     if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
         raise ConfigurationError("enum must be a nonempty array")
-    if "additionalProperties" in schema and (kind != "object" or type(schema["additionalProperties"]) is not bool):
-        raise ConfigurationError("only boolean additionalProperties is supported")
+    if "additionalProperties" in schema:
+        additional = schema["additionalProperties"]
+        if kind != "object":
+            raise ConfigurationError("additionalProperties requires an object")
+        if isinstance(additional, dict):
+            validate_schema(additional)
+        elif type(additional) is not bool:
+            raise ConfigurationError("additionalProperties requires boolean or schema")
     for key in ("minimum", "maximum"):
         if key in schema and (kind not in {"number", "integer"} or type(schema[key]) not in (int, float)
                               or not math.isfinite(schema[key])):
