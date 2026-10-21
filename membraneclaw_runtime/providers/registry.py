@@ -33,6 +33,8 @@ class ProviderRegistry:
 
 def default_registry():
     from .gemini import GeminiAdapter
+    from .openai import OpenAIAdapter
     registry = ProviderRegistry()
     registry.register("gemini", GeminiAdapter)
+    registry.register("openai", OpenAIAdapter)
     return registry

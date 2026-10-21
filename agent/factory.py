@@ -47,6 +47,7 @@ async def runtime_session(*, provider, model, trace_backend="files", trace_dir="
     from membraneclaw_runtime.gateway import ModelGateway
     from membraneclaw_runtime.providers.registry import default_registry
     from membraneclaw_runtime.providers.gemini_transport import GeminiTransport
+    from membraneclaw_runtime.providers.openai_transport import OpenAITransport
     from membraneclaw_runtime.providers.types import ConfigurationError, ContentBlock, ModelRequest, ModelRoute
     from membraneclaw_runtime.runtime import AgentRuntime
     from membraneclaw_runtime.tools import ToolRegistry
@@ -63,7 +64,7 @@ async def runtime_session(*, provider, model, trace_backend="files", trace_dir="
     if trace_backend != "files":
         raise ConfigurationError("only the durable files backend is configured for the CLI")
     if transport is None:
-        factories = {"gemini": GeminiTransport.from_env}
+        factories = {"gemini": GeminiTransport.from_env, "openai": OpenAITransport.from_env}
         factory = factories.get(provider)
         if factory is None:
             raise ConfigurationError("provider transport is not configured")
