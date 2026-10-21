@@ -34,7 +34,9 @@ class ProviderRegistry:
 def default_registry():
     from .gemini import GeminiAdapter
     from .openai import OpenAIAdapter
+    from .anthropic import AnthropicAdapter
     registry = ProviderRegistry()
     registry.register("gemini", GeminiAdapter)
     registry.register("openai", OpenAIAdapter)
+    registry.register("anthropic", AnthropicAdapter)
     return registry
