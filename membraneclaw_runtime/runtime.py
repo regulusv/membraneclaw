@@ -147,7 +147,7 @@ class AgentRuntime:
             elif self.gateway._owner is not asyncio.current_task():
                 raise ConfigurationError("runtime requires execution ownership")
             try:
-                await self._event("runtime.resumed" if self.resumed else "runtime.started", {"request": {"system_instruction": self.request.system_instruction,
+                await self._event("runtime.resumed" if self.resumed else "runtime.started", {"model_request": self.request.to_document(), "request": {"system_instruction": self.request.system_instruction,
                     "content": [asdict(b) for b in self.request.content], "tools": self.registry.document()}})
                 request = self.request
                 while self.steps < self.limits.max_steps:
