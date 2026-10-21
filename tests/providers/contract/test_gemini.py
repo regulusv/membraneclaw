@@ -178,3 +178,22 @@ class StateSerialization(unittest.TestCase):
         self.assertIsInstance(document["native_history"], list)
         self.assertIsInstance(document["pending_calls"], list)
         self.assertEqual(document["native_history"][1]["parts"][0]["thoughtSignature"], "AQID+/==")
+
+
+class ContinuationIsolation(unittest.TestCase):
+    def test_mutating_output_arguments_cannot_change_authoritative_state(self):
+        adapter = GeminiAdapter()
+        state = adapter.initial_state(ROUTE.model)
+        native = adapter.prepare(request(), state)
+        out = adapter.normalize(response(), native, response_ref="synthetic", model_call_id="logical")
+        new = adapter.advance(state, out)
+        out.tool_calls[0].arguments["value"] = 999
+        self.assertEqual(new.pending_calls[0].arguments["value"], 2)
+
+    def test_null_total_usage_is_explicitly_unavailable(self):
+        adapter = GeminiAdapter()
+        native = adapter.prepare(request(), adapter.initial_state(ROUTE.model))
+        raw = canonical_json({"usageMetadata": {"promptTokenCount": 5, "totalTokenCount": None}})
+        out = adapter.normalize(response(raw), native, response_ref="synthetic", model_call_id="logical")
+        self.assertIsNone(out.usage.total_tokens)
+        self.assertEqual(out.usage.unavailable_reason, "total_not_provided")

@@ -19,3 +19,6 @@ jobs:
       - run: python -m compileall -q membraneclaw_runtime
       - run: python -m unittest discover -s tests/tracing -v
       - run: python -m unittest discover -s tests/providers/contract -v
+      - name: Verify installed distribution outside source checkout
+        working-directory: /tmp
+        run: python -m unittest discover -s "$GITHUB_WORKSPACE/tests/providers/contract" -v

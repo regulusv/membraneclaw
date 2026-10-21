@@ -178,7 +178,7 @@ class GeminiAdapter:
                 return value
             usage = Usage(count("promptTokenCount"), count("candidatesTokenCount"), count("totalTokenCount"),
                           count("cachedContentTokenCount"), count("thoughtsTokenCount"),
-                          copy.deepcopy(usage_data), None if "totalTokenCount" in usage_data else "total_not_provided")
+                          copy.deepcopy(usage_data), None if usage_data.get("totalTokenCount") is not None else "total_not_provided")
         candidates = raw.get("candidates", [])
         if not isinstance(candidates, list):
             raise ProtocolError("invalid candidates")
@@ -259,7 +259,7 @@ class GeminiAdapter:
                 content.setdefault("role", "model")
                 history.append(content)  # Signatures, part ordering, unknown fields unchanged.
         new = ProviderState(state.route, self.adapter_version, tuple(history),
-                            output.tool_calls if output.finish_status == "tool_calls" else (),
+                            copy.deepcopy(output.tool_calls) if output.finish_status == "tool_calls" else (),
                             output.native_request.config_hash)
         return self.add_tool_results(new, tool_results) if tool_results else new
 

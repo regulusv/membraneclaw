@@ -621,3 +621,7 @@ The standalone `membraneclaw_runtime` package provides versioned trace contracts
 durable single-host JSON file storage, crash recovery, and sealed snapshots.
 See [the trace format and usage guide](docs/tracing.md). This foundation does not
 yet change the existing Qwen agent path.
+
+The traced Gemini adapter and mandatory model gateway are documented in
+[providers.md](docs/providers.md). They are available as a standalone library;
+the existing agent CLI and HTTP server still use their original Qwen path.

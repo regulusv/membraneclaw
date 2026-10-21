@@ -135,9 +135,9 @@ class HTTPTransportContracts(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(httpd.received, [])
 
     async def test_timeout_remains_unknown_and_does_not_retry_by_default(self):
-        with server([(200, {"synthetic-delay": "0.2"}, final().body)]) as httpd:
+        with server([(200, {"synthetic-delay": "0.4"}, final().body)]) as httpd:
             gw = await self.gateway(loopback_transport(httpd),
-                                    budget=Budget(max_elapsed_seconds=2, attempt_timeout_seconds=0.03))
+                                    budget=Budget(max_elapsed_seconds=2, attempt_timeout_seconds=0.1))
             with self.assertRaises(TransportError):
                 await gw.generate(request())
             self.assertEqual(len(httpd.received), 1)

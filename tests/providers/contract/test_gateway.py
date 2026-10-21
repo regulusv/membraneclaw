@@ -319,3 +319,14 @@ class TransportContractEnforcement(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ProtocolError):
             await gw.generate(request())
         self.assertIsNone(gw._last_output)
+
+
+class UncertainServiceFailure(unittest.IsolatedAsyncioTestCase):
+    async def test_later_success_does_not_clear_a_5xx_unknown_outcome(self):
+        store = MemoryTraceStore()
+        transport = ScriptedTransport([NativeResponse(503, {}, b"synthetic proxy failure"), final()])
+        gw = await ModelGateway.start(store, GeminiAdapter(), transport, ROUTE, sleep=no_wait)
+        await gw.generate(request())
+        await gw.finish()
+        self.assertEqual(store.read_episode(gw.recorder.episode).completeness["external_outcome"], "unknown")
+        self.assertTrue(gw.usage_unknown)

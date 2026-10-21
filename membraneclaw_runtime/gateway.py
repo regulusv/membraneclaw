@@ -283,7 +283,10 @@ class ModelGateway:
                 return output
             if response is not None:
                 self.usage_unknown = True
-                await self._record("attempt.http_error", data={"status": response.status}, **ids)
+                if response.status >= 500:
+                    self.external_outcome = "unknown"  # A proxy/service error cannot prove generation never ran.
+                await self._record("attempt.http_error", checkpoint=self._snapshot(),
+                                   data={"status": response.status}, **ids)
                 if response.status not in {429, 500, 502, 503, 504} or attempt == self.retry.max_attempts:
                     self._failed = True
                     raise ProviderHTTPError(response.status)
