@@ -13,3 +13,10 @@ logs/
 .oauth_state.json
 .google_token.json
 .google_tokens/
+
+
+# Private runtime traces and derived exports (archive separately).
+var/traces/
+*.egg-info/
+build/
+dist/

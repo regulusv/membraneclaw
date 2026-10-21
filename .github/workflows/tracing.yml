@@ -1,0 +1,19 @@
+name: Trace storage contracts
+on:
+  push:
+    paths: ['membraneclaw_runtime/**', 'tests/tracing/**', 'pyproject.toml', '.github/workflows/tracing.yml']
+  pull_request:
+    paths: ['membraneclaw_runtime/**', 'tests/tracing/**', 'pyproject.toml', '.github/workflows/tracing.yml']
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --no-deps .
+      - run: python -m unittest discover -s tests/tracing -v
