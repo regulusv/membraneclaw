@@ -43,7 +43,7 @@ async def runtime_session(*, provider, model, trace_backend="files", trace_dir="
                           system_instruction="Use the provided tools when they improve accuracy. Do not guess tool results.",
                           no_mcp=False, google_token_path=None, google_allow=None, limits=None, budget=None,
                           transport=None, adapter=None, extra_tools=(), role="solver", tenant="local",
-                          resume_episode=None, request_override=None):
+                          resume_episode=None, request_override=None, generation=None, trace_context=None, include_builtin_tools=True):
     from agent import config
     from membraneclaw_runtime.gateway import ModelGateway
     from membraneclaw_runtime.providers.registry import default_registry
@@ -72,7 +72,7 @@ async def runtime_session(*, provider, model, trace_backend="files", trace_dir="
             raise ConfigurationError("provider transport is not configured")
         transport = factory()
     async with AsyncExitStack() as stack:
-        tools = builtin_tools() + list(extra_tools)
+        tools = (builtin_tools() if include_builtin_tools else []) + list(extra_tools)
         credentials = []
         if not no_mcp:
             for namespace, cfg, readonly, secrets in mcp_configurations(config.ROOT):
@@ -86,11 +86,11 @@ async def runtime_session(*, provider, model, trace_backend="files", trace_dir="
         tools.extend(identity_google_tools(google_token_path, allow=google_allow, credential_observer=register))
         registry = ToolRegistry(tools)
         request = request_override or ModelRequest(route, (ContentBlock.text_block(prompt),), system_instruction=system_instruction,
-                               tools=registry.definitions())
+                               tools=registry.definitions(), **(generation or {}))
         # Check all tool schema/provider constraints before creating an episode or calling a model.
         adapter.prepare(request, adapter.initial_state(model))
         if resume_episode is None:
-            gateway = await ModelGateway.start(FileTraceStore(trace_dir), adapter, transport, route, budget=budget, role=role, tenant=tenant)
+            gateway = await ModelGateway.start(FileTraceStore(trace_dir), adapter, transport, route, budget=budget, role=role, tenant=tenant, context=trace_context)
         else:
             gateway = await ModelGateway.restore(FileTraceStore(trace_dir), resume_episode, adapter, transport)
             previous = gateway.application_state["tools"]
