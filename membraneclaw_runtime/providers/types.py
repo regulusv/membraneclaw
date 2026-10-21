@@ -79,6 +79,12 @@ class ModelRequest:
     provider_options: dict = field(default_factory=dict)
     input_token_upper_bound: int | None = None
 
+    def to_document(self):
+        value = asdict(self)
+        value["content"] = [asdict(b) for b in self.content]
+        value["tools"] = [asdict(t) for t in self.tools]
+        return value
+
 
 @dataclass(frozen=True)
 class ToolCall:
