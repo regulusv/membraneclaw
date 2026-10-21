@@ -613,3 +613,11 @@ Things that were needed to make this stack work together:
 vLLM 0.25.1 returns reasoning text in a field named `reasoning`, while qwen-agent
 reads `reasoning_content` — so reasoning text is dropped rather than displayed.
 That is harmless while thinking is off.
+
+
+## Provider-neutral trace storage
+
+The standalone `membraneclaw_runtime` package provides versioned trace contracts,
+durable single-host JSON file storage, crash recovery, and sealed snapshots.
+See [the trace format and usage guide](docs/tracing.md). This foundation does not
+yet change the existing Qwen agent path.
