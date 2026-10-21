@@ -38,9 +38,7 @@ class GeminiTransport:
         start = time.monotonic()
         chunks = []
         try:
-            connection.request("POST", request.path, body=request.body, headers={
-                "Content-Type": "application/json", "Accept-Encoding": "identity",
-                "x-goog-api-key": self._api_key})
+            connection.request("POST", request.path, body=request.body, headers=self._headers())
             holder["socket"] = connection.sock
             response = connection.getresponse()
             headers = {key.lower(): value for key, value in response.getheaders()
@@ -91,12 +89,17 @@ class GeminiTransport:
         if connection is not None:
             connection.close()
 
-    async def exchange(self, request, *, before_send, after_receive, timeout):
+    def _headers(self):
+        return {"Content-Type": "application/json", "Accept-Encoding": "identity", "x-goog-api-key": self._api_key}
+
+    def _validate_request(self, request, timeout):
         if (request.route.provider != "gemini" or request.route.api_family != "generate_content_v1beta"
                 or request.method != "POST" or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", request.route.model)
                 or request.path != f"/v1beta/models/{request.route.model}:generateContent"
                 or not isinstance(request.body, bytes) or timeout <= 0):
             raise ConfigurationError("invalid Gemini native request")
+    async def exchange(self, request, *, before_send, after_receive, timeout):
+        self._validate_request(request, timeout)
         start = time.monotonic()
         await before_send(request)  # Failure here sends ZERO HTTP requests.
         timeout -= time.monotonic() - start
