@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import copy
 from dataclasses import asdict, replace
+from contextlib import AsyncExitStack
 
 from .gateway import TraceStorageError
 from .providers.types import BudgetExceeded, ConfigurationError
@@ -13,12 +14,14 @@ from .tracing import Payload
 
 
 class AgentRuntime:
-    def __init__(self, gateway, registry, request, *, limits=None):
+    def __init__(self, gateway, registry, request, *, limits=None, client_handoff=None, on_finish=None):
         self.gateway, self.registry, self.request = gateway, registry, request
         self.limits = limits or RuntimeLimits()
         self.limits.validate()
         if request.tools != registry.definitions():
             raise ConfigurationError("request tool definitions must match executor registry")
+        self.client_handoff, self.on_finish = client_handoff, on_finish
+        self.resumed = False
         self.executor = ToolExecutor(registry, self.limits.tool_timeout_seconds)
         self.steps = self.tool_calls = 0
         self.pending = []
@@ -27,7 +30,7 @@ class AgentRuntime:
         self.current_model_call_id = None
 
     def _state(self):
-        self.gateway.set_application_state({"runtime_version": "runtime_v1", "limits": asdict(self.limits),
+        self.gateway.set_application_state({**self.gateway.application_state, "runtime_version": "runtime_v1", "limits": asdict(self.limits),
             "tools": self.registry.document(), "steps_used": self.steps, "tool_calls_used": self.tool_calls,
             "pending": copy.deepcopy(self.pending), "next_action": self.next_action,
             "current_model_call_id": self.current_model_call_id})
@@ -40,6 +43,8 @@ class AgentRuntime:
 
     async def _finish(self, status, reason, text=""):
         self.next_action = "stop"
+        if self.on_finish is not None:
+            await self.on_finish(self, status, reason, text)
         await self._event("runtime.finished", {"status": status, "reason": reason})
         await self.gateway.finish(status)
         return RunResult(self.gateway.recorder.episode.episode_id, status, reason, text, self.steps, self.tool_calls)
@@ -70,6 +75,8 @@ class AgentRuntime:
             await self._event("tool.validation_failed", {"tool_call_id": call.id, "error": prepared.validation_error})
         else:
             await self._event("tool.arguments_validated", {"tool_call_id": call.id, "arguments": prepared.arguments})
+            if prepared.spec.metadata.get("execution") == "client":
+                return
             for pending in self.pending:
                 if pending["id"] == call.id:
                     pending["status"] = "started"
@@ -85,12 +92,17 @@ class AgentRuntime:
     async def _tools(self, calls):
         prepared = [self.registry.prepare(call) for call in calls]
         self.pending = [{"id": c.id, "name": c.name, "status": "requested", "result_ref": None} for c in calls]
-        can_parallel = self.limits.parallel_read_only and all(
+        external = [p for p in prepared if p.spec and p.spec.metadata.get("execution") == "client" and not p.validation_error]
+        if external and self.client_handoff is None:
+            raise ConfigurationError("client tools require an authorized handoff")
+        can_parallel = not external and self.limits.parallel_read_only and all(
             p.spec and p.spec.read_only and p.spec.parallel_safe for p in prepared)
         outcomes = {}
         if not can_parallel:
             for p in prepared:
                 await self._start(p)  # A failed commit must invoke no tool.
+                if p in external:
+                    continue
                 result = await self._invoke(p)
                 outcomes[p.call.id] = await self._received(p, result)
                 if not result.known:
@@ -116,6 +128,10 @@ class AgentRuntime:
                 await asyncio.gather(*tasks, return_exceptions=True)
         if any(not value.known for value in outcomes.values()):
             return False
+        if external:
+            self._state()
+            await self.client_handoff(self, external, outcomes)
+            return None
         # Protocol assembly always uses original call order, not completion order.
         await self.gateway.add_tool_results(tuple(outcomes[c.id].result for c in calls))
         self.pending = []
@@ -125,9 +141,13 @@ class AgentRuntime:
         if self._used:
             raise ConfigurationError("runtime episodes are single-use; create a new runtime")
         self._used = True
-        async with self.gateway.execution():
+        async with AsyncExitStack() as stack:
+            if self.gateway._owner is None:
+                await stack.enter_async_context(self.gateway.execution())
+            elif self.gateway._owner is not asyncio.current_task():
+                raise ConfigurationError("runtime requires execution ownership")
             try:
-                await self._event("runtime.started", {"request": {"system_instruction": self.request.system_instruction,
+                await self._event("runtime.resumed" if self.resumed else "runtime.started", {"request": {"system_instruction": self.request.system_instruction,
                     "content": [asdict(b) for b in self.request.content], "tools": self.registry.document()}})
                 request = self.request
                 while self.steps < self.limits.max_steps:
@@ -151,7 +171,10 @@ class AgentRuntime:
                         return await self._finish("failed", "tool_call_budget_exhausted")
                     self.tool_calls += len(output.tool_calls)
                     self.next_action = "tools"
-                    if not await self._tools(output.tool_calls):
+                    tool_state = await self._tools(output.tool_calls)
+                    if tool_state is None:
+                        return RunResult(self.gateway.recorder.episode.episode_id, "awaiting_client_tool", "client_handoff", output.text, self.steps, self.tool_calls)
+                    if not tool_state:
                         return await self._finish("failed", "tool_outcome_unknown")
                     request = replace(self.request, content=())
                 return await self._finish("failed", "step_budget_exhausted")

@@ -42,7 +42,8 @@ def mcp_configurations(root):
 async def runtime_session(*, provider, model, trace_backend="files", trace_dir="./var/traces", prompt,
                           system_instruction="Use the provided tools when they improve accuracy. Do not guess tool results.",
                           no_mcp=False, google_token_path=None, google_allow=None, limits=None, budget=None,
-                          transport=None, adapter=None, extra_tools=()):
+                          transport=None, adapter=None, extra_tools=(), role="solver", tenant="local",
+                          resume_episode=None, request_override=None):
     from agent import config
     from membraneclaw_runtime.gateway import ModelGateway
     from membraneclaw_runtime.providers.registry import default_registry
@@ -84,10 +85,16 @@ async def runtime_session(*, provider, model, trace_backend="files", trace_dir="
             gateway.register_authentication_values(values)
         tools.extend(identity_google_tools(google_token_path, allow=google_allow, credential_observer=register))
         registry = ToolRegistry(tools)
-        request = ModelRequest(route, (ContentBlock.text_block(prompt),), system_instruction=system_instruction,
+        request = request_override or ModelRequest(route, (ContentBlock.text_block(prompt),), system_instruction=system_instruction,
                                tools=registry.definitions())
         # Check all tool schema/provider constraints before creating an episode or calling a model.
         adapter.prepare(request, adapter.initial_state(model))
-        gateway = await ModelGateway.start(FileTraceStore(trace_dir), adapter, transport, route, budget=budget)
+        if resume_episode is None:
+            gateway = await ModelGateway.start(FileTraceStore(trace_dir), adapter, transport, route, budget=budget, role=role, tenant=tenant)
+        else:
+            gateway = await ModelGateway.restore(FileTraceStore(trace_dir), resume_episode, adapter, transport)
+            previous = gateway.application_state["tools"]
+            if previous != registry.document():
+                raise ConfigurationError("tool implementation/schema changed; continuation cannot resume")
         gateway.register_authentication_values(credentials)
         yield AgentRuntime(gateway, registry, request, limits=limits)

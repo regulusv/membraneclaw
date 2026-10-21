@@ -99,6 +99,41 @@ class ModelGateway:
         recorder = await disk(TraceRecorder.begin_episode, store, metadata, tenant=tenant, run_id=run_id)
         return cls(recorder, adapter, transport, route, role=role, budget=budget, retry=retry, **test_controls)
 
+    @classmethod
+    async def restore(cls, store, episode, adapter, transport):
+        """Caller holds execution_guard; never resume a running/terminal episode."""
+        from .providers.types import ModelRoute, ProviderState, ToolCall
+        from .providers.json_utils import strict_json
+        ep = await disk(store.read_episode, episode)
+        if ep.status != "awaiting_client_tool" or ep.checkpoint_ref is None:
+            raise ConfigurationError("episode is not awaiting client tools")
+        value = strict_json(await disk(store.read_payload, ep.checkpoint_ref))
+        ps = value["provider_state"]
+        route = ModelRoute(**ps["route"])
+        if adapter.adapter_version != ps["adapter_version"] or adapter.initial_state(route.model).route != route:
+            raise ConfigurationError("provider version unavailable")
+        g = cls(TraceRecorder(store, episode), adapter, transport, route, role=value["role"],
+                budget=Budget(**value["budget"]), retry=RetryPolicy(**value["retry"]))
+        g.state = ProviderState(route, ps["adapter_version"], tuple(ps["native_history"]),
+                               tuple(ToolCall(**c) for c in ps["pending_calls"]), ps["config_hash"], ps["schema_version"])
+        for name in ("requests_used", "tokens_reserved", "tokens_observed", "tokens_accounted",
+                     "usage_unknown", "capture", "external_outcome", "application_state"):
+            setattr(g, name, copy.deepcopy(value[name]))
+        g.started_at -= value.get("elapsed_seconds", 0)
+        return g
+
+    async def pause(self, status="awaiting_client_tool", kind="client.handoff"):
+        if self._owner is not asyncio.current_task():
+            raise ConfigurationError("pause requires execution ownership")
+        checkpoint = self._snapshot()
+        self.policy.check(checkpoint.data)
+        try:
+            await disk(self.recorder.checkpoint, __import__("json").loads(checkpoint.data), status=status,
+                       event=Event(kind, state_after_ref=checkpoint.ref(self.recorder.episode)))
+        except Exception:
+            self._failed = True
+            raise TraceStorageError("continuation checkpoint failed") from None
+
     @asynccontextmanager
     async def execution(self):
         """A runtime may hold this context across model + tool + model steps."""
@@ -136,6 +171,7 @@ class ModelGateway:
 
     def _snapshot(self, state=None):
         return Payload.json({"gateway_version": "gateway_v1", "role": self.role,
+                             "elapsed_seconds": self.clock() - self.started_at,
                              "provider_state": (state or self.state).to_document(),
                              "application_state": copy.deepcopy(self.application_state),
                              "budget": asdict(self.budget), "retry": asdict(self.retry),
