@@ -1,12 +1,12 @@
-# 轨迹记录使用说明
+# Trace Recording User Guide
 
-这套功能记录一次任务的**模型请求、模型响应、工具参数、工具结果和应用状态**。每个任务有独立的 `episode_id`。拿到这个 ID 后，可以检查原始记录、校验完整性、导出、离线回放，再归档到私有 Git 仓库。
+This feature records the **model requests, model responses, tool arguments, tool results, and application state** for each task. Each task has an `episode_id`. Use that ID to inspect the original data, validate its integrity, export it, replay it offline, and archive it to a private Git repository.
 
-“完整”指应用实际观察到的数据。模型内部隐藏状态不在范围内；API 没有返回的数据、未收到的远端结果不能补造。旧 Qwen 路径仍可使用，但不自动获得这套完整记录保证。
+“Complete” means complete within the application's observable capture boundary. Hidden model state is outside that boundary. Data the API did not return, or a remote result the application never received, cannot be reconstructed. The legacy Qwen path remains available but does not automatically provide these recording guarantees.
 
-## 1. 安装
+## 1. Install
 
-尚未合并全部 PR 时，使用完整功能分支：
+Until the full PR stack is merged, use the branch containing the complete implementation:
 
 ```bash
 git clone --branch codex/tracing-user-guide https://github.com/regulusv/membraneclaw.git
@@ -17,60 +17,60 @@ python -m pip install '.[tools,http]'
 umask 077
 ```
 
-要求 Python 3.11 或以上。持久化与跨进程锁的正式 CI 在 Linux 上运行；文件后端只支持单机本地持久磁盘，不支持多机共享写入。`umask 077` 让后续私有导出默认只对当前操作员开放。
+Python 3.11 or later is required. Durability and cross-process locking CI runs on Linux. The file backend requires local persistent storage on one host; shared writes from multiple hosts are unsupported. `umask 077` makes subsequent private exports accessible only to the current operator by default.
 
-## 2. 先做一次不需要 API key 的检查
+## 2. Try recording without an API key
 
 ```bash
 python -m membraneclaw_runtime.tracing.example
 ```
 
-它生成**合成示例**，不会调用模型或工具。输出包含：
+This creates a **synthetic example** without contacting a model or executing tools. Its output includes:
 
 ```text
 episode=local/<run_id>/<episode_id> status=completed
 ```
 
-复制完整 episode key：
+Copy the full episode key into `EPISODE`:
 
 ```bash
-EPISODE='把上面 local/run_id/episode_id 的完整值粘贴到这里'
+EPISODE='paste-the-full-local/run_id/episode_id-key-here'
 python -m membraneclaw_runtime.tracing.cli validate --trace-dir ./var/traces --episode "$EPISODE"
 python -m membraneclaw_runtime.tracing.cli inspect --trace-dir ./var/traces --episode "$EPISODE"
 ```
 
-`validate` 应退出为 0，返回 revision、事件数、payload 数、状态和完整性。`inspect` 显示事件、状态以及完整 payload；payload 用显式 base64 编码保存展示，不是截断预览。
+`validate` should exit with code 0 and report the revision, event count, payload count, status, and completeness. `inspect` displays events, state, and complete payloads. Payloads are represented with explicit base64 encoding rather than truncated previews.
 
-这个示例验证存储与检查命令，不验证真实 API，也不是执行回放 fixture。
+This example verifies storage and inspection. It does not test a live API and is not an execution-replay fixture.
 
-## 3. 录制一次真实模型任务
+## 3. Record a live model task
 
-先提供对应的环境变量，再明确选择 provider 和 model。当前代码允许的兼容配置如下；这些不是“最新模型”推荐：
+Set the appropriate credential environment variable, then explicitly select a provider and model. The current code accepts these reviewed compatibility profiles; this table is not a recommendation of the latest models:
 
-| provider | model | key 环境变量 |
+| Provider | Model | Credential environment variable |
 |---|---|---|
 | `gemini` | `gemini-2.5-flash` | `GEMINI_API_KEY` |
-| `openai` | `gpt-4.1-2025-04-14` 或 `o4-mini-2025-04-16` | `OPENAI_API_KEY` |
+| `openai` | `gpt-4.1-2025-04-14` or `o4-mini-2025-04-16` | `OPENAI_API_KEY` |
 | `anthropic` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` |
 
-例如，先在当前 shell 设置自己的 `GEMINI_API_KEY`，再执行：
+For example, set your `GEMINI_API_KEY` in the current shell, then run:
 
 ```bash
 membraneclaw \
   --provider gemini --model gemini-2.5-flash \
   --trace-dir ./var/traces --no-mcp \
-  -p '请调用 calculator 计算 27 * 19，并给出结果。'
+  -p 'Use calculator to compute 27 * 19, then report the result.'
 ```
 
-**提示词用 `-p` / `--prompt` 传入**，不是位置参数。`--no-mcp` 关闭外部 MCP 发现，仍保留本地 calculator 等工具。模型是否选择工具由其响应决定，不能仅凭最终答案证明工具执行过；在轨迹中检查 `tool.started` 和 `tool.completed`。
+**Pass the prompt with `-p` or `--prompt`**, not as a positional argument. `--no-mcp` disables external MCP discovery while retaining local tools such as calculator. A correct final answer alone does not prove a tool ran: check `tool.started` and `tool.completed` in the trace.
 
-OpenAI / Claude 只需更换 provider、model 和对应 key；不要在同一个 episode 中切换 provider。API key 来自环境，不进入请求 body 或配置快照。
+For OpenAI or Claude, change the provider, model, and corresponding credential. Do not switch providers inside an existing episode. API keys come from the environment and are excluded from request bodies and configuration snapshots.
 
-开始时会输出 episode ID；结束时会输出最终回答及 `status` / `reason`。正常完成退出为 0，失败退出为非零。复制本次 ID，然后用第 2 节的检查命令查看记录。简短 episode ID 也可用，但必须在当前 trace 目录中唯一。
+The CLI prints the episode ID at startup, then the answer, `status`, and `reason` at completion. Successful execution exits with code 0; failure exits with a nonzero code. Copy this episode ID and use the inspection commands in section 2. A short episode ID is accepted if it is unique within the selected trace directory.
 
-## 4. 记录在哪里，应该看什么
+## 4. Find and interpret a trace
 
-默认目录为当前工作目录下的 `./var/traces`。每个任务的权威数据包括：
+The default location is `./var/traces`, relative to the current working directory. Each task's authoritative data includes:
 
 ```text
 var/traces/<tenant>/<run_id>/<episode_id>/
@@ -80,35 +80,35 @@ var/traces/<tenant>/<run_id>/<episode_id>/
   payloads/<sha256>.bin ...
 ```
 
-`commits` 是有 hash 链的不可变提交；payload 保存完整 bytes，包括超过 UI 预览长度的工具输出。`manifest.json` 可重建；检查与恢复以提交链为准。不要手工编辑原始文件。
+The immutable commits form a hash chain. Payloads preserve complete bytes, including tool results larger than UI preview limits. The manifest can be rebuilt; validation and recovery use the commit chain as the source of truth. Do not edit the original files manually.
 
-| 要回答的问题 | 查看什么 |
+| Question | Evidence to inspect |
 |---|---|
-| 模型实际收到什么？ | `attempt.started` 的 payload：最终序列化请求 body |
-| 模型实际返回什么？ | `attempt.response` 的 payload；流式还要看全部 `stream.frame` |
-| 是否重试？ | 同一 model call 下的独立 attempts 和 `attempt.retry_scheduled` |
-| 工具参数是否有效？ | `tool.requested`、`tool.arguments_validated` / `tool.validation_failed` |
-| 工具实际返回什么？ | `tool.completed` 的全量 payload；按 tool_call_id 配对 |
-| 工具是否可能执行过，但结果不确定？ | `tool.outcome_unknown`；不能自动重复副作用 |
-| 为什么停止？ | `runtime.finished`、episode 状态和最后的状态 checkpoint |
+| What did the model receive? | `attempt.started` payload: the final serialized request body |
+| What did the model return? | `attempt.response` payload; also all `stream.frame` events for streaming |
+| Was a request retried? | Separate attempts for the model call and `attempt.retry_scheduled` |
+| Were tool arguments valid? | `tool.requested`, `tool.arguments_validated`, or `tool.validation_failed` |
+| What did a tool return? | The full `tool.completed` payload, paired by `tool_call_id` |
+| Could a tool have run without a confirmed result? | `tool.outcome_unknown`; do not automatically repeat a side effect |
+| Why did execution stop? | `runtime.finished`, episode status, and the final state checkpoint |
 
-执行状态与记录完整性是两个维度：
+Execution status and recording completeness are separate dimensions:
 
-| 字段 | 含义 |
+| Field | Meaning |
 |---|---|
-| `status=completed` | 应用任务正常完成 |
-| `status=awaiting_client_tool` | 已持久化交接，等待客户端工具结果，不是损坏 |
-| `status=failed/cancelled/interrupted` | 执行失败、取消或中断；已提交记录仍可检查 |
-| `capture=complete` | 在声明的采集边界内，已观察的数据被完整记录 |
-| `capture=partial/unknown` | 有丢失或无法证明完整的部分，不能当成完整样本 |
-| `external_outcome=unknown` | 无法确认远端模型或工具最终是否执行成功 |
-| `replay=unsupported` | 生产记录没有自动认证执行回放能力；仍可检查/播放，执行回放需符合第 6 节条件 |
+| `status=completed` | The application task completed normally |
+| `status=awaiting_client_tool` | A durable handoff is waiting for client tool results; this is not corruption |
+| `status=failed/cancelled/interrupted` | Execution failed, was cancelled, or was interrupted; committed records remain inspectable |
+| `capture=complete` | Observed data was fully recorded within the declared capture boundary |
+| `capture=partial/unknown` | Some data is missing or completeness cannot be established |
+| `external_outcome=unknown` | The application cannot confirm the final outcome of a remote model or tool action |
+| `replay=unsupported` | The producer did not automatically certify execution replay; inspection/playback remain available, and execution replay requires the conditions in section 6 |
 
-一次重试后任务可能完成，但先前未知的远端结果不会因此变成已知。存储写入失败会停止新模型/工具动作，不能把“回答出来了”当成“轨迹已保存”。
+A task may complete after a retry while an earlier remote outcome remains unknown. A trace write failure stops new model/tool actions. Receiving an answer does not by itself prove that its trace was saved.
 
-## 5. 导出给分析者，或导出完整私有记录
+## 5. Export an analysis view or a complete private record
 
-默认 analysis 导出只含事件 ID、顺序、类型和状态，排除提示词、工具内容、原生状态和签名：
+The default analysis export contains event IDs, order, types, and status. It excludes prompts, tool content, native state, and signatures:
 
 ```bash
 python -m membraneclaw_runtime.tracing.cli export \
@@ -116,7 +116,7 @@ python -m membraneclaw_runtime.tracing.cli export \
   --output ./var/traces/analysis.zip
 ```
 
-需要保留全部原始数据、带到另一台机器检查/回放时，显式选择 private replay：
+To preserve all original data for inspection or replay on another machine, explicitly select private replay:
 
 ```bash
 python -m membraneclaw_runtime.tracing.cli export \
@@ -124,38 +124,38 @@ python -m membraneclaw_runtime.tracing.cli export \
   --mode private-replay --output ./var/traces/private-replay.zip
 ```
 
-导出命令不覆盖已有文件；再次导出请使用新文件名。私有 bundle 以 0600 权限创建，包含私人输入、工具数据和 opaque continuation/signature，应只交给有权限的接收者。analysis bundle 标记为 derived/redacted，不能用来无损恢复执行。
+Exports do not overwrite existing files. Use a new output filename when exporting again. A private bundle is created with mode 0600 and contains private inputs, tool data, and opaque continuation/signature data. Share it only with authorized recipients. Analysis bundles are marked derived/redacted and cannot restore execution losslessly.
 
-## 6. 离线回放有两种
+## 6. Choose an offline replay mode
 
-**记录播放**：校验 bundle，重建已经记录的事件和状态，不重新执行任何模型或工具。上面的合成示例也支持这种播放：
+**Recording playback** validates a bundle and reconstructs recorded events and state. It executes no models or tools. The synthetic storage example also supports this mode:
 
 ```bash
 python -m membraneclaw_runtime.tracing.cli replay \
   --bundle ./var/traces/private-replay.zip --offline
 ```
 
-**执行回放**：用 RecordedProvider / RecordedTool 驱动当前 runtime。它严格匹配请求 bytes、工具 ID/参数和原生历史，不允许回退到真实网络：
+**Execution replay** drives the current runtime using RecordedProvider and RecordedTool. It checks request bytes, tool identities/arguments, and native history, with no fallback to a live network call:
 
 ```bash
 python -m membraneclaw_runtime.tracing.cli replay \
   --bundle ./var/traces/private-replay.zip --offline --execute
 ```
 
-执行回放要求已完成的 runtime_v1/gateway_v1 记录及匹配的 adapter 版本。第 2 节的纯存储示例不满足这个条件；应使用第 3 节录制的完整 runtime 任务。跨 HTTP 客户端工具交接、中断记录目前只支持记录播放。并行完成的真实时间不会重演。参数/请求发生分歧时返回 mismatch 并停止，不会悄悄请求模型补齐。
+Execution replay requires a completed runtime_v1/gateway_v1 recording and a matching adapter version. The storage-only example in section 2 does not meet those conditions; use a complete runtime task recorded in section 3. Cross-request HTTP client tool handoffs and interrupted recordings currently support recording playback only. Real-time parallel completion timing is not reproduced. A request/argument mismatch stops replay rather than requesting missing output from a live model.
 
-## 7. 流式与 HTTP
+## 7. Use streaming and HTTP
 
-CLI 加 `--stream` 即使用原生 SSE：
+Add `--stream` to use native SSE in the CLI:
 
 ```bash
 membraneclaw --provider gemini --model gemini-2.5-flash \
-  --stream --no-mcp --trace-dir ./var/traces -p '解释一下反渗透的基本原理。'
+  --stream --no-mcp --trace-dir ./var/traces -p 'Explain the basic principle of reverse osmosis.'
 ```
 
-每个 SSE frame 先持久化再交给消费者；CLI 在流完成后打印最终回答。工具参数完整且响应结束前不会执行工具。断流保留已提交 frames，并标 partial；已转发数据的 attempt 不会自动拼接重试。
+Each SSE frame is persisted before delivery to a consumer. The CLI prints the final answer after the stream finishes. Tools cannot run until their arguments and the model response are complete. An interrupted stream retains committed frames and is marked partial. Attempts that have delivered frames are not automatically retried or spliced together.
 
-HTTP 启动示例：
+Start the HTTP server:
 
 ```bash
 export AGENT_PROVIDER=gemini
@@ -165,23 +165,23 @@ export AGENT_HTTP_NO_MCP=on
 uvicorn server:app --host 127.0.0.1 --port 8001
 ```
 
-本机单请求示例：
+Send a local single-request task:
 
 ```bash
 curl http://127.0.0.1:8001/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"计算 27 * 19"}],"stream":false}'
+  -d '{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"Calculate 27 * 19"}],"stream":false}'
 ```
 
-配置了 `AGENT_API_KEY` 时，客户端还需发送 `Authorization: Bearer <AGENT_API_KEY>`。共享 API key 不代表具体用户身份。客户端工具续接要求现有 Open WebUI 签名 JWT 身份；匿名请求不能声明客户端工具或恢复私人 continuation。
+If `AGENT_API_KEY` is configured, clients must also send `Authorization: Bearer <AGENT_API_KEY>`. A shared API key does not identify an individual user. Client tool continuation requires the existing signed Open WebUI JWT identity. Anonymous requests cannot declare client tools or restore private continuations.
 
-HTTP 返回 trace schema、episode ID、request ID 和 locator。后续客户端工具结果必须保留工具 handle 和完全一致的历史前缀；部分结果先保存，全部到齐后才继续模型。重复相同结果幂等，跨用户、过期、编辑历史或冲突结果会拒绝。
+HTTP responses include the trace schema, episode ID, request ID, and locator. Subsequent client tool results must preserve their handles and the exact history prefix. Partial results are persisted; generation resumes only when all required results arrive. Identical submissions are idempotent. Cross-user handles, expired handles, edited history, and conflicting results are rejected.
 
-`stream=true` 会在已提交 frame 后发送 keepalive，再返回完整可见内容/工具声明、finish/usage 和 `[DONE]`。**当前 HTTP 不逐字展示模型文本**，不向 UI 暴露原始 frame 或签名。普通下一轮聊天创建新 episode，不凭 user ID 猜测跨任务隐藏上下文。完整协议见 [HTTP 使用说明](docs/http-runtime.md)。
+With `stream=true`, the server sends keepalives after committed frames, then complete visible content/tool declarations, finish/usage, and `[DONE]`. **HTTP currently buffers visible model text rather than rendering it incrementally.** Raw frames and signatures are not exposed to the UI. Ordinary new chat turns create new episodes; the server does not infer hidden cross-task context from a user ID. See the [HTTP guide](docs/http-runtime.md) for the full protocol.
 
-## 8. 归档到私有 GitHub 仓库
+## 8. Archive to a private GitHub repository
 
-本地保存不会自动 push。先准备一个已存在的**私有轨迹仓库**、分支和正常 Git 认证；另外设置 `TRACE_ARCHIVE_GITHUB_TOKEN`，用于验证仓库确实为 private。
+Local persistence does not automatically push to Git. Prepare an existing **private trace repository**, select a branch, and configure normal Git authentication. Also set `TRACE_ARCHIVE_GITHUB_TOKEN` so the publisher can verify that the target repository is private.
 
 ```bash
 python -m membraneclaw_runtime.archives.cli publish \
@@ -190,19 +190,19 @@ python -m membraneclaw_runtime.archives.cli publish \
   --branch trace-data --state-dir ./var/trace-archive
 ```
 
-| archive status | 含义 / 下一步 |
+| Archive status | Meaning and next action |
 |---|---|
-| `published` | 已验证远端 ref 包含 snapshot commit 和全部预期 blobs |
-| `pending` | 本地仍在，归档未确认；修复网络/认证后重试同一命令，不重跑模型 |
-| `not_configured` | 没有目标；不会自行创建仓库或上传 |
+| `published` | The remote ref was verified to contain the snapshot commit and all expected blobs |
+| `pending` | Local data remains available, but archival is unconfirmed; fix connectivity/authentication and retry the same command without rerunning the model |
+| `not_configured` | No target is configured; no repository is created and nothing is uploaded |
 
-重试按 snapshot hash 幂等；只提交快照的确切路径，不 force push。远端有别人新增的提交时，重建独立 checkout 后追加自己的快照。receipt 与运行时 trace 分开保存。
+Retries are idempotent by snapshot hash. The publisher stages only exact snapshot paths and never force-pushes. If the remote branch advances, it creates a fresh checkout and appends the snapshot while preserving unrelated commits. Archive receipts are stored separately from runtime traces.
 
-归档恢复、访问权限与留存说明见 [归档运维说明](docs/archive-operations.md)。删除当前文件不等于删除 Git 历史；不要先公开原始记录再尝试补救。
+See [archive operations](docs/archive-operations.md) for restore, access control, and retention. Deleting current files does not remove Git history. Choose a private target before publishing raw records.
 
-## 9. 评估与健康检查
+## 9. Integrate evaluation and check health
 
-评估安装与角色配置见 [评估记录说明](docs/evaluation-tracing.md)。solver/router/teacher/judge/recovery 走同一 gateway，但可分别配置 provider；judge 和工具禁用角色不获得工具。
+See [evaluation tracing](docs/evaluation-tracing.md) for installation and role configuration. Solver, router, teacher, judge, and recovery calls use the same gateway but can select different providers. Judges and tool-disabled roles receive no tools.
 
 ```bash
 python -m pip install -e experiments/auto-evaluate
@@ -211,49 +211,49 @@ python -m membraneclaw_runtime.operations \
   --trace-dir ./var/traces --archive-state ./var/trace-archive
 ```
 
-评估结果保留 canonical event IDs 和私有 bundle；judge 视图裁剪会列出省略的事件 ID，原始记录不裁剪。复用已有结果不计作新 API 请求。研究导出需明确 dataset split，不能把测试轨迹自动混入训练集。
+Evaluation records retain canonical event IDs and private bundles. A trimmed judge view lists omitted event IDs without trimming the original trace. Reused results do not count as new API calls. Set the dataset split explicitly for research exports; test traces must not be automatically mixed into training data.
 
-健康命令输出记录大小、incomplete episodes、unknown tool outcomes、请求/重试数、pending continuations 和归档状态。先区分执行失败、采集不完整和归档积压，再判断需要重试哪一层。
+The health command reports storage size, incomplete episodes, unknown tool outcomes, requests/retries, pending continuations, and archive status. Distinguish execution failures, incomplete capture, and archive backlog before deciding which operation to retry.
 
-## 10. 验证范围与排错
+## 10. Verification and troubleshooting
 
-离线验证覆盖合成三家协议、真实本地 MCP、文件故障/锁、HTTP 续接、无网络回放和本地 bare Git 归档；CI 覆盖 Python 3.11–3.13。真实三家 API、WaterTAP、Open WebUI 和私有 GitHub trace 归档 smoke 的状态需单独记录，不能用离线通过代替。
+Offline validation covers synthetic native protocols for all three providers, real local MCP, file faults/locks, HTTP continuation, network-free replay, and local bare Git archives. CI covers Python 3.11–3.13. Live API, WaterTAP, Open WebUI, and private GitHub archive smoke tests require separate results; passing offline tests does not establish live end-to-end success.
 
-| 现象 | 检查 / 处理 |
+| Symptom | Check or action |
 |---|---|
-| 缺少 model/key 或 ConfigurationError | 明确选择上表的 provider/model，确认对应 key；不支持的参数会在请求前拒绝 |
-| trace_storage_error | 检查磁盘、目录权限和本地文件系统；停止新调用，保留已有文件 |
-| continuation_busy | 原 worker 可能仍在运行；不要把正在等待网络的任务判死 |
-| outcome_unknown | 远端动作可能已经发生；先检查记录和远端事实，不自动重复副作用 |
-| bundle 已存在 | 换一个输出名；命令不会覆盖原文件 |
-| replay mismatch / 不支持的版本 | 保留原 bundle，使用记录播放检查分歧；不要自动切真实 API |
-| archive pending | 重试归档，不重跑原任务；检查 Git 认证、目标私有性与网络 |
+| Missing model/key or ConfigurationError | Select a reviewed provider/model and set the matching key; unsupported options are rejected before sending |
+| trace_storage_error | Check disk space, permissions, and the local filesystem; stop new actions and preserve existing data |
+| continuation_busy | The original worker may still be active; do not declare a task dead while it is waiting on the network |
+| outcome_unknown | The remote action may already have happened; inspect the trace and remote facts before repeating a side effect |
+| Output bundle already exists | Choose a new filename; exports do not overwrite files |
+| Replay mismatch or unsupported version | Preserve the bundle and use recording playback to investigate; do not automatically switch to a live API |
+| Archive pending | Retry archival without rerunning the task; check Git authentication, private-target verification, and connectivity |
 
-格式、协议和实现边界分别见 [存储格式](docs/tracing.md)、[runtime](docs/runtime.md)、[streaming](docs/streaming.md)、[replay](docs/replay.md)。
+Further references: [storage format](docs/tracing.md), [runtime](docs/runtime.md), [streaming](docs/streaming.md), and [replay](docs/replay.md).
 
-实际 API smoke 必须显式开启。OpenAI / Claude 各自提供 key 和上表中对应的 `LIVE_OPENAI_MODEL` / `LIVE_ANTHROPIC_MODEL` 后，可运行：
+Live API smoke tests require explicit opt-in. Set the corresponding key and reviewed `LIVE_OPENAI_MODEL` / `LIVE_ANTHROPIC_MODEL`, then run:
 
 ```bash
 RUN_LIVE_PROVIDER_SMOKE=1 python -m unittest discover \
   -s tests/providers/contract -p test_live_native.py -v
 ```
 
-未提供开关、key 或 model 的 provider 显示 skipped，不计为 passed。真实调用会产生 API 用量；这个检查仅验证无工具任务，不代表 WaterTAP 或 Open WebUI 端到端测试通过。
+A provider with no flag, key, or model is skipped rather than counted as passed. Live calls consume API usage. This check verifies a tool-free task only; it does not establish WaterTAP or Open WebUI integration success.
 
-## PR 对应关系
+## PR map
 
-这些 PR 按依赖堆叠，每个 diff 只包含本阶段修改；不会自动合并。
+The PRs are stacked by dependency. Each diff contains its own stage of work. They are not merged automatically.
 
-| 计划范围 | PR |
+| Implementation plan scope | PR |
 |---|---|
-| PR 1：存储基础，已合并上游 | [rtong/membraneclaw #41](https://github.com/rtong/membraneclaw/pull/41) |
-| PR 2：Gemini + gateway | [#1](https://github.com/regulusv/membraneclaw/pull/1) |
-| PR 5：通用 runtime + CLI | [#2](https://github.com/regulusv/membraneclaw/pull/2) |
-| PR 3：OpenAI Responses | [#3](https://github.com/regulusv/membraneclaw/pull/3) |
-| PR 4：Claude Messages | [#4](https://github.com/regulusv/membraneclaw/pull/4) |
-| PR 6：持久化流式 | [#5](https://github.com/regulusv/membraneclaw/pull/5) |
-| PR 7：HTTP + 客户端工具续接 | [#6](https://github.com/regulusv/membraneclaw/pull/6) |
-| PR 8a：导出 + 离线回放 | [#7](https://github.com/regulusv/membraneclaw/pull/7) |
-| PR 8b：评估集成 | [#8](https://github.com/regulusv/membraneclaw/pull/8) |
-| PR 8c：Git 归档 + 运维 | [#9](https://github.com/regulusv/membraneclaw/pull/9) |
-| 使用手册 + 显式 live 检查入口 | 当前 `codex/tracing-user-guide` 分支 |
+| PR 1: storage foundation, merged upstream | [rtong/membraneclaw #41](https://github.com/rtong/membraneclaw/pull/41) |
+| PR 2: Gemini and gateway | [#1](https://github.com/regulusv/membraneclaw/pull/1) |
+| PR 5: provider-neutral runtime and CLI | [#2](https://github.com/regulusv/membraneclaw/pull/2) |
+| PR 3: OpenAI Responses | [#3](https://github.com/regulusv/membraneclaw/pull/3) |
+| PR 4: Claude Messages | [#4](https://github.com/regulusv/membraneclaw/pull/4) |
+| PR 6: durable streaming | [#5](https://github.com/regulusv/membraneclaw/pull/5) |
+| PR 7: HTTP and client tool continuation | [#6](https://github.com/regulusv/membraneclaw/pull/6) |
+| PR 8a: export and offline replay | [#7](https://github.com/regulusv/membraneclaw/pull/7) |
+| PR 8b: evaluation integration | [#8](https://github.com/regulusv/membraneclaw/pull/8) |
+| PR 8c: Git archive and operations | [#9](https://github.com/regulusv/membraneclaw/pull/9) |
+| User guide and explicit live checks | [#10](https://github.com/regulusv/membraneclaw/pull/10), branch `codex/tracing-user-guide` |
