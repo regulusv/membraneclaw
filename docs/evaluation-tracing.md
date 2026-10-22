@@ -8,7 +8,7 @@ Install the runtime first (`pip install '.[tools,http]'`), then `pip install -e 
 
 Existing system definitions select model IDs; routes can override provider/model/provider_options per role. Native top_p/enable_thinking overrides are rejected; use provider_options. Router translation explicitly removes the legacy enable_thinking=false hint. Native RAG attachments are not implemented: do not label tool-free runs as RAG experiments.
 
-Teacher/judge automation can opt in with `auto-evaluate auto --native-provider openai --codex-model gpt-4.1-2025-04-14` plus existing run/benchmark flags. This branch uses the traced API client before Codex selection; default account-based Codex behavior is unchanged. Judge/router/recovery/tool-free teacher calls have no tools. Tool teachers use configured MCP tools and still pass existing output/tool policy validation.
+Teacher/judge automation can opt in with `python -m auto_evaluate auto --native-provider openai --codex-model gpt-4.1-2025-04-14` plus existing run/benchmark flags. This branch uses the traced API client before Codex selection; default account-based Codex behavior is unchanged. Judge/router/recovery/tool-free teacher calls have no tools. Tool teachers use configured MCP tools and still pass existing output/tool policy validation.
 
 Each native call records role, context, dataset split and episode ID. Validation repair and context recovery create child episodes; the original failed record remains. Recovery records excerpt hash, truncation rule and parent ID. Native responses include a mode-0600 private portable bundle and its locator; copy that bundle when moving results to another host. Storage failure cannot promise an export.
 

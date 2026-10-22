@@ -615,17 +615,8 @@ reads `reasoning_content` — so reasoning text is dropped rather than displayed
 That is harmless while thinking is off.
 
 
-## Provider-neutral trace storage
+## Provider-neutral tracing
 
-The standalone `membraneclaw_runtime` package provides versioned trace contracts,
-durable single-host JSON file storage, crash recovery, and sealed snapshots.
-See [the trace format and usage guide](docs/tracing.md). This foundation does not
-yet change the existing Qwen agent path.
+Start with [trace recording user guide](TRACING_README.md): installation, a no-key storage demo, explicit Gemini/OpenAI/Claude selection, inspection, validation, private export, offline replay, HTTP client tools and private Git archive operations.
 
-The traced Gemini adapter and mandatory model gateway are documented in
-[providers.md](docs/providers.md). They are available as a standalone library;
-the existing agent CLI and HTTP server still use their original Qwen path.
-
-The provider-neutral tool loop and CLI are available on the runtime branch;
-see [runtime setup and behavior](docs/runtime.md). Select Gemini explicitly with
-`--provider gemini --model gemini-2.5-flash`. Qwen remains the default CLI provider.
+Qwen remains the default. The new provider paths require a writable recorder and preserve full native responses/tool payloads. Local persistence and verified remote archival have separate statuses. See the guide for current limitations and live smoke-test requirements.
