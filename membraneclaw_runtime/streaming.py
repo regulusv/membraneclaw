@@ -43,6 +43,18 @@ class SSEFramer:
         self.buffer = b""
         self.maximum = maximum
 
+    def append(self, chunk):
+        self.buffer += chunk
+
+    def peek(self):
+        match = re.search(b"\r\n\r\n|\r\n\n|\n\r\n|\n\n|\r\r", self.buffer)
+        return self.buffer[:match.end()] if match else None
+
+    def acknowledge(self, raw):
+        if not self.buffer.startswith(raw):
+            raise ProtocolError("stream capture acknowledgement mismatch")
+        self.buffer = self.buffer[len(raw):]
+
     def feed(self, chunk):
         self.buffer += chunk
         frames = []
@@ -171,7 +183,7 @@ class StreamAssembler:
         return copy.deepcopy(self.value), self.done
 
 
-async def exchange_stream(transport, request, *, before_send, after_receive, on_frame, timeout):
+async def exchange_stream(transport, request, *, before_send, after_receive, on_frame, timeout, after_capture=None):
     import httpx
     from .providers.gemini_transport import SAFE_RESPONSE_HEADERS
     transport._validate_request(unstream_request(request), timeout)
@@ -181,13 +193,38 @@ async def exchange_stream(transport, request, *, before_send, after_receive, on_
     if timeout <= 0:
         raise TransportError("deadline_before_send")
     assembler, framer, sequence = StreamAssembler(request.route.api_family), SSEFramer(), 0
-    async def consume(raw, complete=True):
+    async def capture(raw, complete=True):
         nonlocal sequence
         frame = StreamFrame(raw, datetime.now(timezone.utc).isoformat(), sequence, complete)
+        # Cancellation cannot leave an ambiguous commit acknowledgement. Drain
+        # the capture task before removing its bytes from the pending buffer.
+        task = asyncio.create_task(on_frame(frame))
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        task.result()
+        framer.acknowledge(raw)
         sequence += 1
-        await on_frame(frame)  # Must persist BEFORE parsing or forwarding.
+        if cancelled:
+            raise asyncio.CancelledError()
+        return frame
+
+    async def consume(raw, complete=True):
+        frame = await capture(raw, complete)
+        if after_capture is not None:
+            await after_capture(frame)
         if not complete or len(raw) > framer.maximum: raise ProtocolError("incomplete or oversized SSE frame")
         assembler.feed(raw)
+
+    async def flush_received():
+        # Capture only: never parse, forward, or execute anything during cleanup.
+        while framer.buffer:
+            raw = framer.peek()
+            await capture(raw or framer.buffer, raw is not None)
+
     try:
         async with asyncio.timeout(timeout):
             async with httpx.AsyncClient(follow_redirects=False, trust_env=False) as client:
@@ -200,7 +237,9 @@ async def exchange_stream(transport, request, *, before_send, after_receive, on_
                     else:
                         if headers.get("content-encoding", "identity") != "identity": raise ProtocolError("encoded SSE not supported")
                         async for chunk in response.aiter_raw():
-                            for raw in framer.feed(chunk): await consume(raw)
+                            framer.append(chunk)
+                            while (raw := framer.peek()) is not None:
+                                await consume(raw)
                             if len(framer.buffer) > framer.maximum:
                                 await consume(framer.buffer, False)
                         if framer.buffer: await consume(framer.buffer, False)
@@ -209,8 +248,15 @@ async def exchange_stream(transport, request, *, before_send, after_receive, on_
                                                 None if complete else "stream_missing_terminal")
                     await after_receive(result)
                     return result
+    except asyncio.CancelledError:
+        cleanup = asyncio.create_task(flush_received())
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                continue
+        cleanup.result()
+        raise
     except (httpx.HTTPError, TimeoutError):
-        if framer.buffer:
-            frame = StreamFrame(framer.buffer, datetime.now(timezone.utc).isoformat(), sequence, False)
-            await on_frame(frame)
+        await flush_received()
         raise TransportError("stream_transport_failed") from None

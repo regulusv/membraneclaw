@@ -73,12 +73,14 @@ class Assembly(unittest.TestCase):
 class ScriptedStream:
     authentication_values=()
     def __init__(self,events):self.events=events;self.pulled=0;self.closed=False
-    async def exchange_stream(self,request,*,before_send,after_receive,on_frame,timeout):
+    async def exchange_stream(self,request,*,before_send,after_receive,on_frame,timeout,after_capture=None):
         await before_send(request);a=StreamAssembler(request.route.api_family)
         try:
             for i,e in enumerate(self.events):
                 raw=frame(e);self.pulled+=1
-                await on_frame(StreamFrame(raw,"synthetic",i));a.feed(raw)
+                await on_frame(StreamFrame(raw,"synthetic",i))
+                if after_capture is not None:await after_capture(StreamFrame(raw,"synthetic",i))
+                a.feed(raw)
             value,complete=a.finish();r=NativeResponse(200,{},canonical_json(value),complete)
             await after_receive(r);return r
         finally:self.closed=True
@@ -135,3 +137,85 @@ class DurableStreaming(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.text,"hi");self.assertTrue(closed)
         ep=g.recorder.store.read_episode(g.recorder.episode)
         self.assertEqual(b''.join(g.recorder.store.read_payload(e["payload_ref"]) for e in ep.events if e["type"]=="stream.frame"),raw)
+
+    async def test_coalesced_chunk_cancel_retains_every_received_byte_once(self):
+        import httpx
+        raw=b''.join(frame(e) for e in oa_events())+b'data: {"partial":'
+        closed=[]; forwarded=[]
+        class Bytes(httpx.AsyncByteStream):
+            async def __aiter__(self):yield raw
+            async def aclose(self):closed.append(True)
+        async def handler(req):return httpx.Response(200,stream=Bytes())
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        store=MemoryTraceStore();g,r=await self.gateway(store,OpenAITransport("synthetic-key"))
+        async def cancel(f):
+            forwarded.append(f.sequence)
+            raise asyncio.CancelledError()
+        with patch("httpx.AsyncClient",return_value=client):
+            with self.assertRaises(asyncio.CancelledError):await g.generate(r,stream=True,on_frame=cancel)
+        events=store.read_episode(g.recorder.episode).events
+        frames=[e for e in events if e["type"]=="stream.frame"]
+        self.assertEqual(b''.join(store.read_payload(e["payload_ref"]) for e in frames),raw)
+        self.assertEqual([e["data"]["sequence"] for e in frames],list(range(4)))
+        self.assertFalse(frames[-1]["data"]["complete_frame"])
+        self.assertEqual(forwarded,[0]);self.assertTrue(closed)
+        self.assertEqual(g.capture,"partial");self.assertEqual(g.external_outcome,"unknown")
+        self.assertFalse(any(e["type"] in {"tool.started","attempt.response"} for e in events))
+
+    async def test_cancel_during_capture_does_not_duplicate_committed_frame(self):
+        import httpx
+        import threading
+        raw=b''.join(frame(e) for e in oa_events())
+        entered=threading.Event();release=threading.Event()
+        class Bytes(httpx.AsyncByteStream):
+            async def __aiter__(self):yield raw
+        async def handler(req):return httpx.Response(200,stream=Bytes())
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        store=MemoryTraceStore();g,r=await self.gateway(store,OpenAITransport("synthetic-key"))
+        original=store.commit
+        def wait(*args,**kwargs):
+            events=kwargs.get("events",args[2] if len(args)>2 else [])
+            if any(e.type=="stream.frame" and e.data["sequence"]==0 for e in events):
+                entered.set()
+                if not release.wait(5):raise RuntimeError("test barrier timed out")
+            return original(*args,**kwargs)
+        with patch("httpx.AsyncClient",return_value=client),patch.object(store,"commit",side_effect=wait):
+            task=asyncio.create_task(g.generate(r,stream=True))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait,3))
+                task.cancel();await asyncio.sleep(0)
+            finally:release.set()
+            with self.assertRaises(asyncio.CancelledError):await task
+        frames=[e for e in store.read_episode(g.recorder.episode).events if e["type"]=="stream.frame"]
+        self.assertEqual(b''.join(store.read_payload(e["payload_ref"]) for e in frames),raw)
+        self.assertEqual(len(frames),3)
+
+    async def test_escaped_credentials_rejected_before_response_or_frame_commit(self):
+        import httpx
+        from membraneclaw_runtime.tracing.policy import CapturePolicy,CredentialRejected
+        secret="synthetic-key"
+        bodies=[b'{"text":"\\u0073ynthetic-key"}',
+                b'{"nested":[{"value":"prefix-\\u0073ynthetic-key-suffix"}]}',
+                b'{"\\u0073ynthetic-key":"key"}',
+                b'{"x":"\\u0073ynthetic-key","x":"overwritten"}']
+        for body in bodies:
+            with self.subTest(body=body):
+                with self.assertRaises(CredentialRejected):CapturePolicy([secret]).check(body)
+                class Transport:
+                    authentication_values=(secret,)
+                    async def exchange(self,native,*,before_send,after_receive,timeout):
+                        await before_send(native)
+                        response=NativeResponse(200,{},body)
+                        await after_receive(response);return response
+                store=MemoryTraceStore();g,r=await self.gateway(store,Transport())
+                with self.assertRaises(TraceStorageError):await g.generate(r)
+                self.assertFalse(any(e["type"]=="attempt.response" for e in store.read_episode(g.recorder.episode).events))
+                wire=b'data: '+body+b'\n\n'
+                class Bytes(httpx.AsyncByteStream):
+                    async def __aiter__(self):yield wire
+                async def handler(req):return httpx.Response(200,stream=Bytes())
+                client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+                store=MemoryTraceStore();g,r=await self.gateway(store,OpenAITransport(secret))
+                with patch("httpx.AsyncClient",return_value=client):
+                    with self.assertRaises(TraceStorageError):await g.generate(r,stream=True)
+                self.assertFalse(any(e["type"]=="stream.frame" for e in store.read_episode(g.recorder.episode).events))

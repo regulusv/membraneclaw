@@ -89,3 +89,36 @@ class GitArchiveContracts(unittest.TestCase):
         self.assertEqual(gauges['archive_published'],1)
         self.assertEqual(gauges['archive_pending'],0)
         self.assertGreater(gauges['storage_bytes'],0)
+
+    def test_exact_blobs_with_text_attributes_and_clean_smudge_filters(self):
+        from membraneclaw_runtime.archives.git_archive import load_git_snapshot
+        import os
+        # Configure a real transforming filter inherited by the archive worker.
+        config=self.root/'gitconfig'
+        config.write_text('[filter "transform"]\n clean = "tr a-z A-Z"\n smudge = "tr a-z A-Z"\n required = true\n')
+        seed=self.root/'seed';git(self.root,'init',str(seed))
+        (seed/'.gitattributes').write_text('*.bin text eol=lf filter=transform\n')
+        git(seed,'add','.gitattributes')
+        git(seed,'-c','user.name=Synthetic','-c','user.email=synthetic@localhost','-c','commit.gpgsign=false','commit','-m','Attributes')
+        git(seed,'push',str(self.remote),'HEAD:refs/heads/trace-data')
+        rec=TraceRecorder.begin_episode(self.store,{'synthetic':'attributes'})
+        payload=Payload(b'original\r\nbytes\r\n')
+        rec.append_event(Event('tool.completed',payload_ref=payload.ref(rec.episode)),payload=payload)
+        rec.finish_episode('completed',capture='complete',external_outcome='known')
+        snapshot=seal(self.store,rec.episode)
+        relative=Path('traces')/snapshot.episode.key/snapshot.snapshot_hash
+        with patch.dict(os.environ,{'GIT_CONFIG_GLOBAL':str(config)}):
+            archive=self.archive();self.assertEqual(archive.publish(snapshot).status,'published')
+            self.assertEqual(archive.publish(snapshot).status,'published')
+            for name,data in snapshot.files:
+                actual=subprocess.check_output(['git','cat-file','blob','trace-data:'+str(relative/name)],cwd=self.remote)
+                self.assertEqual(actual,data)
+            checkout=self.root/'filtered';git(self.root,'clone','--branch','trace-data',str(self.remote),str(checkout))
+            # Checkout transformations actually changed the working file.
+            name=next(n for n,b in snapshot.files if b==payload.data)
+            self.assertNotEqual((checkout/relative/name).read_bytes(),payload.data)
+            self.assertEqual(load_snapshot(checkout/relative).files,snapshot.files)
+            bare=self.root/'bare-copy';git(self.root,'clone','--bare','--branch','trace-data',str(self.remote),str(bare))
+            restored=restore(load_git_snapshot(bare,relative.as_posix()),self.root/'exact-restored')
+            self.assertEqual(validate(restored,snapshot.episode).status,'completed')
+            self.assertEqual(restored.read_payload(payload.ref(snapshot.episode)),payload.data)

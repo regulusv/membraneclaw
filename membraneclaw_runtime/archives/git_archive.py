@@ -73,6 +73,9 @@ class GitTraceArchive:
             raise ArchiveFailure('git_command_failed')
         return result
 
+    def _blob(self, checkout, revision, path):
+        return read_git_blob(checkout, revision, path, timeout=self.command_timeout)
+
     def _receipt(self, receipt):
         self.state_dir.mkdir(parents=True,exist_ok=True,mode=0o700)
         path = self.state_dir/(receipt.snapshot_hash+'.receipt.json')
@@ -125,7 +128,7 @@ class GitTraceArchive:
                         files['snapshot.json'] = manifest
                         already = target.exists()
                         if already:
-                            if target.is_symlink() or any((target/p).is_symlink() or not (target/p).is_file() or (target/p).read_bytes()!=b for p,b in files.items()):
+                            if target.is_symlink() or any((target/p).is_symlink() or not (target/p).is_file() or self._blob(checkout,'HEAD',str(relative/p))!=b for p,b in files.items()):
                                 raise Corruption('archive snapshot conflict')
                         else:
                             for name,data in files.items():
@@ -137,7 +140,9 @@ class GitTraceArchive:
                                 with path.open('xb') as file:
                                     os.chmod(path,0o600);file.write(data)
                             paths = [str(relative/p) for p in sorted(files)]
-                            self._git(checkout,'add','--',*paths)
+                            for path in paths:
+                                oid = self._git(checkout,'hash-object','-w','--no-filters',path).stdout.strip()
+                                self._git(checkout,'update-index','--add','--cacheinfo','100644',oid,path)
                             self._git(checkout,'-c','user.name=MembraneClaw Trace Archive','-c','user.email=trace-archive@localhost',
                                       '-c','commit.gpgsign=false','commit','-q','-m','Archive trace snapshot '+snapshot.snapshot_hash)
                         commit = self._git(checkout,'rev-parse','HEAD').stdout.strip()
@@ -151,9 +156,8 @@ class GitTraceArchive:
                         if self._git(checkout,'merge-base','--is-ancestor',commit,remote_commit,check=False).returncode:
                             raise ArchiveFailure('remote_advanced_or_push_failed')
                         for name,data in files.items():
-                            blob = self._git(checkout,'rev-parse',remote_commit+':'+str(relative/name)).stdout.strip()
-                            expected = self._git(checkout,'hash-object',str(target/name)).stdout.strip()
-                            if blob != expected:raise ArchiveFailure('remote_snapshot_verification_failed')
+                            if self._blob(checkout,remote_commit,str(relative/name)) != data:
+                                raise ArchiveFailure('remote_snapshot_verification_failed')
                         return self._receipt(ArchiveReceipt('published',snapshot.snapshot_hash,self.branch,commit,repository=self.remote))
                 except ArchiveFailure:
                     # Reapply only this immutable snapshot on the newest branch in a fresh checkout.
@@ -163,25 +167,55 @@ class GitTraceArchive:
             os.close(fd)
 
 
-def load_snapshot(directory):
-    """Read an archive checkout snapshot without trusting paths in its inventory."""
+def read_git_blob(repository, revision, path, *, timeout=120):
+    if not re.fullmatch(r'HEAD|[a-f0-9]{40,64}', revision):
+        raise Corruption('unsafe archive revision')
+    result = subprocess.run(['git','cat-file','blob',revision+':'+path],cwd=repository,
+                            capture_output=True,timeout=timeout)
+    if result.returncode:raise Corruption('archive blob unavailable')
+    return result.stdout
+
+
+def _assemble_snapshot(read):
     from ..tracing.schema import EpisodeRef
     from ..tracing.validation import SealedSnapshot
-    directory = Path(directory)
-    if directory.is_symlink():raise Corruption('symlink snapshot directory')
-    directory = directory.resolve()
-    metadata = json.loads((directory/'snapshot.json').read_bytes())
+    metadata = json.loads(read('snapshot.json'))
     files=[]
     for item in metadata['inventory']['files']:
         name=item['path']
         if not re.fullmatch(r'genesis\.json|commits/[0-9]{6,}\.json|payloads/[a-f0-9]{64}\.bin',name):
             raise Corruption('unsafe archive inventory path')
-        path=directory/name
-        if path.is_symlink() or any(p.is_symlink() for p in path.parents):raise Corruption('symlink archive payload')
-        data=path.read_bytes()
+        data=read(name)
         if len(data)!=item['size'] or digest(data)!=item['sha256']:raise Corruption('archive payload mismatch')
         files.append((name,data))
     snapshot=SealedSnapshot(EpisodeRef(**metadata['episode']),metadata['revision'],tuple(sorted(files)),metadata['snapshot_hash'])
     snapshot.verify()
     if snapshot.inventory()!=metadata['inventory']:raise Corruption('archive inventory mismatch')
     return snapshot
+
+
+def load_git_snapshot(repository, snapshot_path):
+    """Read committed bytes directly; supports bare/no-checkout repositories."""
+    from pathlib import PurePosixPath
+    path = PurePosixPath(snapshot_path)
+    if path.is_absolute() or '..' in path.parts or str(path) != snapshot_path:
+        raise Corruption('unsafe snapshot path')
+    # Pin HEAD once, so concurrent ref updates cannot mix revisions.
+    revision = subprocess.check_output(['git','rev-parse','HEAD'],cwd=repository,text=True).strip()
+    return _assemble_snapshot(lambda name: read_git_blob(repository,revision,str(path/name)))
+
+
+def load_snapshot(directory):
+    """Read archive objects when inside Git, or validate a standalone snapshot."""
+    directory = Path(directory)
+    if directory.is_symlink():raise Corruption('symlink snapshot directory')
+    directory = directory.resolve()
+    result = subprocess.run(['git','rev-parse','--show-toplevel'],cwd=directory,capture_output=True,text=True)
+    if result.returncode == 0:
+        repository = Path(result.stdout.strip()).resolve()
+        return load_git_snapshot(repository,directory.relative_to(repository).as_posix())
+    def read(name):
+        path=directory/name
+        if path.is_symlink() or any(p.is_symlink() for p in path.parents):raise Corruption('symlink archive payload')
+        return path.read_bytes()
+    return _assemble_snapshot(read)

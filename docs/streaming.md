@@ -24,3 +24,9 @@ Environment: Linux x86_64, Python 3.12.14; 5 synthetic runs, 31 frames/run, 3,84
 Synchronous persistence has material per-frame cost in this small fixture. The initial implementation keeps the documented durable-before-delivery guarantee; a future batching change needs its own loss-bound and latency tests. Rollback: omit `--stream` to use the existing captured non-streaming path. Existing partial episodes must remain partial.
 
 Sources: [OpenAI events](https://developers.openai.com/api/reference/resources/responses/streaming-events), [Claude streams](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures).
+
+On cancellation the framer retains each received byte until its capture commit
+has settled. Cleanup captures remaining complete frames and the unfinished
+suffix exactly once, without parsing or forwarding them. Storage failures or
+credential policy rejection still stop capture. Raw credential checks also
+inspect decoded SSE data JSON keys and values before any frame is committed.

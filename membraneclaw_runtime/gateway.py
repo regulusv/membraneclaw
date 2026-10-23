@@ -281,14 +281,12 @@ class ModelGateway:
                                    data={"sequence":frame.sequence, "received_at":frame.received_at,
                                          "complete_frame":frame.complete}, **ids)
                 frame_count += 1
-                if on_frame is not None:
-                    await on_frame(frame)
 
             response = None
             try:
                 if stream:
                     response = await self.transport.exchange_stream(native, before_send=before_send,
-                        after_receive=after_receive, on_frame=capture_frame, timeout=timeout)
+                        after_receive=after_receive, on_frame=capture_frame, timeout=timeout, after_capture=on_frame)
                     await self._record("stream.eof", data={"frames":frame_count, "complete":response.complete}, **ids)
                 else:
                     response = await self.transport.exchange(native, before_send=before_send,

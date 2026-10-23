@@ -31,18 +31,47 @@ class CapturePolicy:
         raw = value if isinstance(value, bytes) else canonical_json(value)
         if any(secret in raw for secret in self._values):
             raise CredentialRejected("registered authentication value rejected")
-        try:
-            obj = json.loads(raw)
-        except (ValueError, UnicodeError):
-            return
+        def text_check(text):
+            encoded = text.encode("utf-8", errors="surrogatepass")
+            if any(secret in encoded for secret in self._values):
+                raise CredentialRejected("registered authentication value rejected")
+
         def walk(item):
-            if isinstance(item, dict):
-                for key, child in item.items():
-                    normalized = "".join(c for c in key.lower() if c.isalnum())
-                    if normalized in self.AUTH_KEYS and child is not None:
-                        raise CredentialRejected("authentication field rejected")
-                    walk(child)
+            if isinstance(item, str):
+                text_check(item)
+            elif isinstance(item, dict):
+                pairs_check(item.items())
             elif isinstance(item, list):
                 for child in item:
                     walk(child)
-        walk(obj)
+
+        def pairs_check(pairs):
+            # Inspect before dict construction, including overwritten duplicate keys.
+            for key, child in pairs:
+                text_check(key)
+                normalized = "".join(c for c in key.lower() if c.isalnum())
+                if normalized in self.AUTH_KEYS and child is not None:
+                    raise CredentialRejected("authentication field rejected")
+                walk(child)
+            return dict(pairs)
+
+        def inspect_json(data):
+            try:
+                obj = json.loads(data, object_pairs_hook=pairs_check)
+            except (ValueError, UnicodeError):
+                return
+            walk(obj)
+
+        inspect_json(raw)
+        # A capture may contain several SSE frames (including cleanup captures).
+        try:
+            lines = raw.decode("utf-8").splitlines()
+        except UnicodeError:
+            return
+        data = []
+        for line in lines + [""]:
+            if line.startswith("data:"):
+                data.append(line[5:].removeprefix(" "))
+            elif not line and data:
+                inspect_json("\n".join(data))
+                data = []
