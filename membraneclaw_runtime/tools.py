@@ -12,7 +12,6 @@ from typing import Callable
 
 from jsonschema import Draft202012Validator
 
-from .gateway import disk
 from .providers.json_utils import strict_json
 from .providers.types import ConfigurationError, ProtocolError, ToolCall, ToolDefinition, ToolResult
 from .tracing.schema import Payload, canonical_json, digest
@@ -149,7 +148,7 @@ class ToolExecutor:
             raise ConfigurationError("tool timeout must be finite and positive")
         self.registry, self.timeout_seconds = registry, timeout_seconds
 
-    async def invoke(self, prepared, *, timeout_seconds=None):
+    async def invoke(self, prepared, *, timeout_seconds=None, on_cancelled_outcome=None):
         call, spec = prepared.call, prepared.spec
         if prepared.validation_error:
             return outcome(call, {"error": prepared.validation_error}, is_error=True)
@@ -157,7 +156,7 @@ class ToolExecutor:
         async def run():
             if inspect.iscoroutinefunction(spec.handler):
                 return await spec.handler(copy.deepcopy(prepared.arguments))
-            return await disk(spec.handler, copy.deepcopy(prepared.arguments))
+            return await asyncio.to_thread(spec.handler, copy.deepcopy(prepared.arguments))
 
         effective_timeout = self.timeout_seconds if timeout_seconds is None else timeout_seconds
         if type(effective_timeout) not in (int, float) or not math.isfinite(effective_timeout) or effective_timeout <= 0:
@@ -168,16 +167,34 @@ class ToolExecutor:
             # Structured MCP errors are known tool results, not transport failures.
             return outcome(call, value, is_error=isinstance(value, dict) and value.get("isError") is True)
         except (TimeoutError, asyncio.CancelledError) as error:
-            task.cancel()
-            late = None
+            if inspect.iscoroutinefunction(spec.handler):
+                task.cancel()
+            late, late_exception = None, None
+            # A synchronous action cannot be cancelled. Keep its receipt and keep
+            # execution ownership until the worker has actually stopped.
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
             try:
-                late = await task  # Drain sync worker; never release execution_guard while it runs.
-            except (Exception, asyncio.CancelledError):
-                pass
-            if isinstance(error, asyncio.CancelledError):
-                raise
-            return outcome(call, {"error": {"code": "tool_outcome_unknown", "reason": "timeout"},
-                                  "late_result": late}, is_error=True, known=False, code="timeout")
+                late = task.result()
+            except (Exception, asyncio.CancelledError) as late_error:
+                late_exception = type(late_error).__name__
+            if isinstance(late, bytes):
+                late = {"encoding":"base64", "data":base64.b64encode(late).decode("ascii")}
+            cancelled = isinstance(error, asyncio.CancelledError)
+            reason = "cancelled" if cancelled else "timeout"
+            result = outcome(call, {"error": {"code":"tool_outcome_unknown", "reason":reason},
+                                    "late_result":late, "late_exception_type":late_exception},
+                             is_error=True, known=False, code=reason)
+            if cancelled:
+                if on_cancelled_outcome is not None:
+                    await on_cancelled_outcome(result)
+                raise error
+            return result
         except ToolFailure as error:
             return outcome(call, {"error": {"code": "tool_failed", "detail": str(error)}}, is_error=True)
         except Exception as error:

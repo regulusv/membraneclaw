@@ -78,3 +78,23 @@ class TimeoutConfiguration(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConfigurationError):
             await ToolExecutor(registry).invoke(registry.prepare(call), timeout_seconds=-1)
         self.assertEqual(invoked, [])
+
+    async def test_sync_late_exception_is_retained_without_retry(self):
+        import threading
+        entered=threading.Event();release=threading.Event();calls=[]
+        def worker(args):
+            calls.append(1);entered.set()
+            if not release.wait(5):raise RuntimeError("test barrier timed out")
+            raise LookupError("private exception detail")
+        registry=ToolRegistry([ToolSpec("write","fixture",{"type":"object"},worker,"v1")])
+        call=ToolCall("id",None,"write",{}, {},0)
+        task=asyncio.create_task(ToolExecutor(registry,.01).invoke(registry.prepare(call)))
+        try:
+            self.assertTrue(await asyncio.to_thread(entered.wait,3));await asyncio.sleep(.03)
+            self.assertFalse(task.done())
+        finally:release.set()
+        result=await task
+        self.assertFalse(result.known)
+        self.assertEqual(result.result.result["late_exception_type"],"LookupError")
+        self.assertNotIn(b"private exception detail",result.payload.data)
+        self.assertEqual(calls,[1])
