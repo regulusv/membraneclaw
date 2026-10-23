@@ -74,7 +74,10 @@ class GitTraceArchive:
         return result
 
     def _blob(self, checkout, revision, path):
-        return read_git_blob(checkout, revision, path, timeout=self.command_timeout)
+        try:
+            return read_git_blob(checkout, revision, path, timeout=self.command_timeout)
+        except (Corruption, OSError, subprocess.TimeoutExpired):
+            raise ArchiveFailure('archive_blob_verification_failed') from None
 
     def _receipt(self, receipt):
         self.state_dir.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -213,7 +216,11 @@ def load_snapshot(directory):
     result = subprocess.run(['git','rev-parse','--show-toplevel'],cwd=directory,capture_output=True,text=True)
     if result.returncode == 0:
         repository = Path(result.stdout.strip()).resolve()
-        return load_git_snapshot(repository,directory.relative_to(repository).as_posix())
+        relative = directory.relative_to(repository).as_posix()
+        tracked = subprocess.run(['git','cat-file','-e','HEAD:'+relative+'/snapshot.json'],
+                                 cwd=repository,capture_output=True)
+        if tracked.returncode == 0:
+            return load_git_snapshot(repository,relative)
     def read(name):
         path=directory/name
         if path.is_symlink() or any(p.is_symlink() for p in path.parents):raise Corruption('symlink archive payload')

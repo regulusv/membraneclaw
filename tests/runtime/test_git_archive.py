@@ -122,3 +122,15 @@ class GitArchiveContracts(unittest.TestCase):
             restored=restore(load_git_snapshot(bare,relative.as_posix()),self.root/'exact-restored')
             self.assertEqual(validate(restored,snapshot.episode).status,'completed')
             self.assertEqual(restored.read_payload(payload.ref(snapshot.episode)),payload.data)
+
+    def test_standalone_snapshot_inside_unrelated_git_checkout(self):
+        checkout=self.root/'unrelated';git(self.root,'init',str(checkout))
+        snapshot_dir=checkout/'download'
+        for name,data in self.snapshot.files:
+            path=snapshot_dir/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
+        from dataclasses import asdict
+        from membraneclaw_runtime.tracing.schema import canonical_json
+        (snapshot_dir/'snapshot.json').write_bytes(canonical_json({
+            'snapshot_hash':self.snapshot.snapshot_hash,'episode':asdict(self.snapshot.episode),
+            'revision':self.snapshot.revision,'inventory':self.snapshot.inventory()}))
+        self.assertEqual(load_snapshot(snapshot_dir).files,self.snapshot.files)
