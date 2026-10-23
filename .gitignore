@@ -21,5 +21,8 @@ var/traces/
 build/
 dist/
 
-# 08.5: the frozen copy a run is launched from (bash reads a running script as it goes)
+# Archive worker checkouts and receipts may contain private snapshots.
+var/trace-archive/
+
+# Frozen launch copy for upstream MLX runs.
 experiments/notebooks/smoke_test35/08.5_mlx_stack_ppo_run.live.sh
