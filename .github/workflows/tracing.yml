@@ -1,9 +1,9 @@
 name: Runtime, tracing and provider contracts
 on:
   push:
-    paths: ['membraneclaw_runtime/**', 'tests/tracing/**', 'tests/providers/**', 'tests/runtime/**', 'experiments/auto-evaluate/**', 'agent/**', 'docs/**', '*README.md', 'server.py', 'cli.py', 'pyproject.toml', '.github/workflows/tracing.yml']
+    paths: ['membraneclaw_runtime/**', 'tests/tracing/**', 'tests/providers/**', 'tests/runtime/**', 'tests/rsi/**', 'examples/rsi/**', 'experiments/auto-evaluate/**', 'agent/**', 'docs/**', '*README.md', 'server.py', 'cli.py', 'pyproject.toml', '.github/workflows/tracing.yml']
   pull_request:
-    paths: ['membraneclaw_runtime/**', 'tests/tracing/**', 'tests/providers/**', 'tests/runtime/**', 'experiments/auto-evaluate/**', 'agent/**', 'docs/**', '*README.md', 'server.py', 'cli.py', 'pyproject.toml', '.github/workflows/tracing.yml']
+    paths: ['membraneclaw_runtime/**', 'tests/tracing/**', 'tests/providers/**', 'tests/runtime/**', 'tests/rsi/**', 'examples/rsi/**', 'experiments/auto-evaluate/**', 'agent/**', 'docs/**', '*README.md', 'server.py', 'cli.py', 'pyproject.toml', '.github/workflows/tracing.yml']
 jobs:
   offline:
     runs-on: ubuntu-latest
@@ -20,6 +20,7 @@ jobs:
       - run: python -m unittest discover -s tests/tracing -v
       - run: python -m unittest discover -s tests/providers/contract -v
       - run: python -m unittest discover -s tests/runtime -v
+      - run: python -m unittest discover -s tests/rsi -v
       - run: python agent/test_google_tools.py
       - run: python agent/test_google_oauth.py
       - run: python agent/test_identity.py
@@ -30,6 +31,9 @@ jobs:
       - name: Verify installed runtime outside source checkout
         working-directory: /tmp
         run: python -m unittest discover -s "$GITHUB_WORKSPACE/tests/runtime" -v
+      - name: Verify installed RSI outside source checkout
+        working-directory: /tmp
+        run: python -m unittest discover -s "$GITHUB_WORKSPACE/tests/rsi" -v
       - name: Install evaluation package
         run: |
           python -m pip install --no-deps -e experiments/auto-evaluate

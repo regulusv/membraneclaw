@@ -620,3 +620,10 @@ That is harmless while thinking is off.
 Start with [trace recording user guide](TRACING_README.md): installation, a no-key storage demo, explicit Gemini/OpenAI/Claude selection, inspection, validation, private export, offline replay, HTTP client tools and private Git archive operations.
 
 Qwen remains the default. The new provider paths require a writable recorder and preserve full native responses/tool payloads. Local persistence and verified remote archival have separate statuses. See the guide for current limitations and live smoke-test requirements.
+
+## Offline RSI controller
+
+Run a two-round synthetic improvement loop without model credentials:
+`python -m membraneclaw_runtime.rsi.cli demo --output ./var/rsi/demo-001`.
+It exercises candidate acceptance/rejection, durable recovery and budget tracking;
+fixture scores are not evidence of real model improvement. See [RSI usage](docs/rsi.md).
