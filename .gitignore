@@ -26,3 +26,6 @@ var/trace-archive/
 
 # Frozen launch copy for upstream MLX runs.
 experiments/notebooks/smoke_test35/08.5_mlx_stack_ppo_run.live.sh
+
+# Private RSI journals, input snapshots and disposable workspaces.
+var/rsi/
