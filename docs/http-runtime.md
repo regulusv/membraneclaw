@@ -19,3 +19,10 @@ Usage reports observed totals, null when unknown; split prompt/completion counte
 Run `python -m unittest discover -s tests/runtime -v`, plus existing identity/OAuth/Google tests. Offline fixtures cover restart, partial/multiple results, idempotence/conflict, owner/history/TTL rejection, simultaneous requests, interrupted sends, stream correlation and ASGI SSE. Real Open WebUI and live provider smoke are unverified without the deployment. Before rollout, check that the deployed Open WebUI version preserves assistant content/tool_call IDs and handles partial tool rounds.
 
 Rollback: set AGENT_PROVIDER=qwen for new tasks, or reject new tasks on the disabled route. Drain old handoffs on a compatible isolated worker, or return provider_disabled; never translate opaque state into a different provider.
+
+Partial result submissions return a non-executable acknowledgement with
+`continuation.status=partial_results`, `accepted_handles`, `pending_handles`, and
+`preserve_history_prefix=true`. Its assistant message has no tool declarations
+and its finish reason is `stop`; the trace remains `awaiting_client_tool`. Both
+JSON and SSE replies carry this metadata. Preserve the original handoff history
+prefix when submitting the remaining results. Do not add acknowledgements to it.

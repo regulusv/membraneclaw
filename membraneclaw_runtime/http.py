@@ -104,7 +104,13 @@ class HTTPService:
                             await g.record_event("client.result_received",payload=Payload.json({"handle":h,**v}),tool_call_id=active["handles"][h]["call_id"])
                         if set(active["results"])!=set(active["handles"]):
                             await g.pause(kind="client.partial_results")
-                            return self._envelope(active["reply"],ref,"awaiting_client_tool",None,rid)
+                            ack = self._envelope({"role":"assistant","content":None},ref,"awaiting_client_tool",None,rid)
+                            ack["choices"][0]["finish_reason"] = "stop"
+                            ack["continuation"] = {"status":"partial_results",
+                                "accepted_handles":list(active["results"]),
+                                "pending_handles":[h for h in active["handles"] if h not in active["results"]],
+                                "preserve_history_prefix":True}
+                            return ack
                         active["status"]="resuming"
                         g.set_application_state(local)
                         await g.pause(status="running",kind="client.resuming")
@@ -187,9 +193,9 @@ async def dispatch(service, body, *, user=None):
                 else:
                     choice=value["choices"][0]
                     yield "data: "+json.dumps({"id":value["id"],"object":"chat.completion.chunk","model":value["model"],
-                        "choices":[{"index":0,"delta":choice["message"],"finish_reason":None}],"trace":value["trace"]})+"\n\n"
+                        "choices":[{"index":0,"delta":choice["message"],"finish_reason":None}],"trace":value["trace"], **({"continuation":value["continuation"]} if "continuation" in value else {})})+"\n\n"
                     yield "data: "+json.dumps({"id":value["id"],"object":"chat.completion.chunk","model":value["model"],
-                        "choices":[{"index":0,"delta":{},"finish_reason":choice["finish_reason"]}],"usage":value["usage"],"trace":value["trace"]})+"\n\n"
+                        "choices":[{"index":0,"delta":{},"finish_reason":choice["finish_reason"]}],"usage":value["usage"],"trace":value["trace"], **({"continuation":value["continuation"]} if "continuation" in value else {})})+"\n\n"
                 yield "data: [DONE]\n\n"
                 break
         finally:

@@ -183,6 +183,66 @@ class RuntimeContracts(unittest.IsolatedAsyncioTestCase):
             await runtime.run()
         self.assertEqual(self.events("tool.completed"), [])
 
+    async def test_sync_late_receipt_survives_timeout_and_cancellation_under_lock(self):
+        import threading
+        for cancel in (False,True):
+            with self.subTest(cancel=cancel),tempfile.TemporaryDirectory() as directory:
+                entered=threading.Event();release=threading.Event();calls=[]
+                def worker(args):
+                    calls.append(args);entered.set()
+                    if not release.wait(5):raise RuntimeError("test barrier timed out")
+                    return {"receipt":"receipt-123"}
+                runtime=await self.make([{"calls":[{"name":"write","args":{"n":1}}]}],
+                    [tool("write",worker)],RuntimeLimits(tool_timeout_seconds=.02),store=FileTraceStore(directory))
+                task=asyncio.create_task(runtime.run())
+                try:
+                    self.assertTrue(await asyncio.to_thread(entered.wait,3))
+                    if cancel:task.cancel()
+                    await asyncio.sleep(.05)
+                    self.assertFalse(task.done())
+                    with self.assertRaises(Busy):
+                        with self.store.execution_guard(runtime.gateway.recorder.episode):pass
+                finally:release.set()
+                if cancel:
+                    with self.assertRaises(asyncio.CancelledError):await task
+                else:self.assertEqual((await task).reason,"tool_outcome_unknown")
+                events=self.events("tool.outcome_unknown")
+                self.assertEqual(len(events),1)
+                value=json.loads(self.store.read_payload(events[0]["payload_ref"]))
+                self.assertEqual(value["late_result"],{"receipt":"receipt-123"})
+                self.assertEqual(value["error"]["reason"],"cancelled" if cancel else "timeout")
+                self.assertEqual(len(calls),1);self.assertEqual(len(self.transport.requests),1)
+
+    async def test_parallel_sync_late_receipt_is_recorded_by_owner(self):
+        import threading
+        for cancel in (True,):
+            with self.subTest(cancel=cancel),tempfile.TemporaryDirectory() as directory:
+                entered=threading.Event();release=threading.Event();calls=[]
+                def worker(args):
+                    calls.append(args);entered.set()
+                    if not release.wait(5):raise RuntimeError("test barrier timed out")
+                    return {"receipt":"receipt-123"}
+                runtime=await self.make([{"calls":[{"name":"write","args":{"n":1}}]}],
+                    [tool("write",worker,read_only=True,parallel_safe=True)],RuntimeLimits(tool_timeout_seconds=.02,parallel_read_only=True),store=FileTraceStore(directory))
+                task=asyncio.create_task(runtime.run())
+                try:
+                    self.assertTrue(await asyncio.to_thread(entered.wait,3))
+                    if cancel:task.cancel()
+                    await asyncio.sleep(.05)
+                    self.assertFalse(task.done())
+                    with self.assertRaises(Busy):
+                        with self.store.execution_guard(runtime.gateway.recorder.episode):pass
+                finally:release.set()
+                if cancel:
+                    with self.assertRaises(asyncio.CancelledError):await task
+                else:self.assertEqual((await task).reason,"tool_outcome_unknown")
+                events=self.events("tool.outcome_unknown")
+                self.assertEqual(len(events),1)
+                value=json.loads(self.store.read_payload(events[0]["payload_ref"]))
+                self.assertEqual(value["late_result"],{"receipt":"receipt-123"})
+                self.assertEqual(value["error"]["reason"],"cancelled" if cancel else "timeout")
+                self.assertEqual(len(calls),1);self.assertEqual(len(self.transport.requests),1)
+
 class GeminiToolLoop(unittest.IsolatedAsyncioTestCase):
     async def test_real_gemini_adapter_with_synthetic_responses_keeps_signature(self):
         from membraneclaw_runtime.providers.gemini import GeminiAdapter

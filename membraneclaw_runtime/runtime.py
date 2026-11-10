@@ -83,11 +83,12 @@ class AgentRuntime:
             await self._event("tool.started", {"tool_call_id": call.id, "name": prepared.spec.name,
                                               "arguments": prepared.arguments})
 
-    async def _invoke(self, prepared):
+    async def _invoke(self, prepared, *, on_cancelled_outcome=None):
         remaining = self.gateway.remaining_seconds()
         if remaining <= 0:
             raise BudgetExceeded("execution time budget exhausted before tool action")
-        return await self.executor.invoke(prepared, timeout_seconds=min(self.limits.tool_timeout_seconds, remaining))
+        return await self.executor.invoke(prepared, timeout_seconds=min(self.limits.tool_timeout_seconds, remaining),
+            on_cancelled_outcome=on_cancelled_outcome or (lambda result: self._received(prepared, result)))
 
     async def _tools(self, calls):
         prepared = [self.registry.prepare(call) for call in calls]
@@ -111,8 +112,11 @@ class AgentRuntime:
             # One recorder/owner commits all events; child tasks only invoke tools.
             for p in prepared:
                 await self._start(p)
+            cancelled_results = []
             async def invoke(p):
-                return p, await self._invoke(p)
+                async def retain(result):
+                    cancelled_results.append((p,result))
+                return p, await self._invoke(p,on_cancelled_outcome=retain)
             tasks = [asyncio.create_task(invoke(p)) for p in prepared]
             try:
                 for task in asyncio.as_completed(tasks):
@@ -125,7 +129,16 @@ class AgentRuntime:
                 for task in tasks:
                     if not task.done():
                         task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+                settled = await asyncio.gather(*tasks, return_exceptions=True)
+                # Child tasks retain evidence; only the execution owner records it.
+                for value in settled:
+                    if isinstance(value,tuple):
+                        p,result = value
+                        if p.call.id not in outcomes:
+                            outcomes[p.call.id] = await self._received(p,result)
+                for p,result in cancelled_results:
+                    if p.call.id not in outcomes:
+                        outcomes[p.call.id] = await self._received(p,result)
         if any(not value.known for value in outcomes.values()):
             return False
         if external:

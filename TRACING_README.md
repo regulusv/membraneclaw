@@ -153,7 +153,7 @@ membraneclaw --provider gemini --model gemini-2.5-flash \
   --stream --no-mcp --trace-dir ./var/traces -p 'Explain the basic principle of reverse osmosis.'
 ```
 
-Each SSE frame is persisted before delivery to a consumer. The CLI prints the final answer after the stream finishes. Tools cannot run until their arguments and the model response are complete. An interrupted stream retains committed frames and is marked partial. Attempts that have delivered frames are not automatically retried or spliced together.
+Each SSE frame is persisted before delivery to a consumer. The CLI prints the final answer after the stream finishes. Tools cannot run until their arguments and the model response are complete. On cancellation, all bytes already received by the application, including additional frames and an unfinished suffix in the current HTTP chunk, are captured before cancellation propagates. Cleanup does not forward those frames or execute tools. The trace is marked partial; capture still requires a writable store and payloads accepted by the credential policy. Attempts that have delivered frames are not automatically retried or spliced together.
 
 Start the HTTP server:
 
@@ -178,6 +178,22 @@ If `AGENT_API_KEY` is configured, clients must also send `Authorization: Bearer 
 HTTP responses include the trace schema, episode ID, request ID, and locator. Subsequent client tool results must preserve their handles and the exact history prefix. Partial results are persisted; generation resumes only when all required results arrive. Identical submissions are idempotent. Cross-user handles, expired handles, edited history, and conflicting results are rejected.
 
 With `stream=true`, the server sends keepalives after committed frames, then complete visible content/tool declarations, finish/usage, and `[DONE]`. **HTTP currently buffers visible model text rather than rendering it incrementally.** Raw frames and signatures are not exposed to the UI. Ordinary new chat turns create new episodes; the server does not infer hidden cross-task context from a user ID. See the [HTTP guide](docs/http-runtime.md) for the full protocol.
+
+For partial client tool submissions, the reply is an acknowledgement with
+`continuation.accepted_handles` and `continuation.pending_handles`, with no
+executable `tool_calls`. Keep the original handoff history prefix for later
+submissions; do not append the acknowledgement to that prefix. Repeating an
+accepted result does not issue another model request.
+
+A synchronous tool that times out or is cancelled may still finish its action.
+The runtime waits for that worker while holding execution ownership and records
+its `late_result` or `late_exception_type`. Its outcome remains unknown and is
+never automatically retried. Inspect a returned receipt before deciding what to
+do next.
+
+Registered credentials are checked in raw bytes and decoded JSON strings/keys,
+including SSE `data:` JSON, before persistence. This does not detect unknown
+credentials or provide a general sensitive-data classifier.
 
 ## 8. Archive to a private GitHub repository
 

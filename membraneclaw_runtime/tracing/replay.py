@@ -30,7 +30,7 @@ class RecordedProvider:
                 if event["type"]=="stream.frame":current["frames"].append(event)
                 if event["type"]=="attempt.response":current["response"]=event
                 if event["type"]=="attempt.failed":current["error"]=event["data"].get("error_code","recorded_transport_error")
-    async def exchange(self,native,*,before_send,after_receive,timeout,on_frame=None):
+    async def exchange(self,native,*,before_send,after_receive,timeout,on_frame=None,after_capture=None):
         from ..streaming import StreamFrame
         if self.index>=len(self.attempts):raise ReplayMismatch("unexpected model request")
         attempt=self.attempts[self.index];self.index+=1
@@ -41,7 +41,9 @@ class RecordedProvider:
         if on_frame is not None:
             for e in attempt["frames"]:
                 d=e["data"]
-                await on_frame(StreamFrame(self.store.read_payload(e["payload_ref"]),d["received_at"],d["sequence"],d["complete_frame"]))
+                frame = StreamFrame(self.store.read_payload(e["payload_ref"]),d["received_at"],d["sequence"],d["complete_frame"])
+                await on_frame(frame)
+                if after_capture is not None:await after_capture(frame)
         elif attempt["frames"]:raise ReplayMismatch("stream mode mismatch")
         if "response" not in attempt:raise TransportError(attempt.get("error","recorded_unknown_outcome"))
         e=attempt["response"];d=e["data"]

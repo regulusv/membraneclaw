@@ -191,3 +191,10 @@ continuations, streaming and archive/replay. Roll back by selecting Qwen, or rev
 PR 5 while retaining versioned traces. The tool-implementation extraction keeps
 legacy wrapper behavior covered. This PR is stacked on PR 2 in the fork; no PR is
 merged automatically. Next in the agreed plan: PR 3, the OpenAI Responses adapter.
+
+For synchronous tools, timeout or cancellation does not stop the worker. The
+runtime drains it under execution ownership and records `late_result` (binary
+values use explicit base64 encoding) or `late_exception_type`, including during
+parallel cancellation. The outcome stays unknown with its timeout/cancellation
+marker. A recorded late receipt is evidence for reconciliation, never permission
+to retry the action automatically.

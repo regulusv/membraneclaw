@@ -19,10 +19,12 @@ BODY={"messages":[{"role":"user","content":"synthetic client task"}],"tools":TOO
 USER=SimpleNamespace(id="synthetic-user")
 
 class StreamFake(FakeTransport):
-    async def exchange_stream(self,native,*,before_send,after_receive,on_frame,timeout):
+    async def exchange_stream(self,native,*,before_send,after_receive,on_frame,timeout,after_capture=None):
         async def sent(n):
             await before_send(n)
-            await on_frame(StreamFrame(b'data: {"synthetic":true}\n\n',"synthetic",0))
+            f = StreamFrame(b'data: {"synthetic":true}\n\n',"synthetic",0)
+            await on_frame(f)
+            if after_capture is not None:await after_capture(f)
         return await self.exchange(native,before_send=sent,after_receive=after_receive,timeout=timeout)
 
 class HTTPContinuations(unittest.IsolatedAsyncioTestCase):
@@ -49,6 +51,11 @@ class HTTPContinuations(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(partial["trace"]["status"],"awaiting_client_tool");self.assertEqual(len(self.t.requests),1)
         repeated=await self.service.execute({"messages":prefix+results[:1]},user=USER)
         self.assertEqual(repeated["trace"]["status"],"awaiting_client_tool")
+        for ack in (partial,repeated):
+            self.assertNotIn("tool_calls",ack["choices"][0]["message"])
+            self.assertEqual(ack["choices"][0]["finish_reason"],"stop")
+            self.assertEqual(ack["continuation"]["accepted_handles"],[results[0]["tool_call_id"]])
+            self.assertEqual(ack["continuation"]["pending_handles"],[results[1]["tool_call_id"]])
         final=await self.service.execute({"messages":prefix+results[1:]},user=USER)
         self.assertEqual(final["choices"][0]["message"]["content"],"finished");self.assertEqual(len(self.t.requests),2)
         cached=await self.service.execute({"messages":prefix+results},user=USER)
@@ -102,6 +109,22 @@ class HTTPContinuations(unittest.IsolatedAsyncioTestCase):
     async def test_anonymous_tools_rejected_before_model(self):
         with self.assertRaises(ContinuationError):await self.service.execute(BODY)
         self.assertEqual(len(self.t.requests),0)
+
+    async def test_sse_partial_ack_contains_handles_without_tool_declarations(self):
+        import json
+        prefix,results=await self.handoff()
+        response=await dispatch(self.service,{"messages":prefix+results[:1],"stream":True},user=USER)
+        chunks=[]
+        async for value in response.body_iterator:
+            text=value.decode() if isinstance(value,bytes) else value
+            for line in text.splitlines():
+                if line.startswith("data: ") and line!="data: [DONE]":chunks.append(json.loads(line[6:]))
+        self.assertTrue(chunks)
+        for chunk in chunks:
+            self.assertNotIn("tool_calls",chunk["choices"][0]["delta"])
+            self.assertEqual(chunk["continuation"]["accepted_handles"],[results[0]["tool_call_id"]])
+            self.assertEqual(chunk["continuation"]["pending_handles"],[results[1]["tool_call_id"]])
+        self.assertEqual(len(self.t.requests),1)
 
 class ServerBoundary(unittest.TestCase):
     def test_native_import_has_no_qwen_side_effects(self):
