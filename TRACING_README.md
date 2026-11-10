@@ -257,3 +257,71 @@ The PRs are stacked by dependency. Each diff contains its own stage of work. The
 | PR 8b: evaluation integration | [#8](https://github.com/regulusv/membraneclaw/pull/8) |
 | PR 8c: Git archive and operations | [#9](https://github.com/regulusv/membraneclaw/pull/9) |
 | User guide and explicit live checks | [#10](https://github.com/regulusv/membraneclaw/pull/10), branch `codex/tracing-user-guide` |
+
+## 12. Live tracing with a Key Desk credential
+
+A Key Desk connection test alone does not exercise this runtime. The optional
+`gemini_keydesk` profile now runs a real request through `AgentRuntime`,
+`ModelGateway`, `KeyDeskTransport`, and the existing `FileTraceStore`, without
+exporting the vault's API key. It requires an authenticated caller for the
+Key Desk `gemini_call` MCP tool; a credential ID alone is not authentication.
+
+This first profile supports `gemini-3.5-flash-lite`, a single user text turn,
+and an explicit output cap of 1–1024 tokens. It **rejects** system instructions,
+tools, temperature, reasoning options, streams and subsequent turns. The direct
+`gemini` provider and its existing tool/streaming contracts are unchanged.
+Do not use this bounded profile as a full RSI Solver/Proposer integration.
+
+Application integration:
+
+```python
+from membraneclaw_runtime.providers.keydesk import start_keydesk_gateway
+from membraneclaw_runtime.providers.types import ModelRequest, ContentBlock
+from membraneclaw_runtime.runtime import AgentRuntime
+from membraneclaw_runtime.tools import ToolRegistry
+from membraneclaw_runtime.tracing import FileTraceStore
+
+# invoke(arguments) must call the authenticated gemini_call MCP tool and return
+# its parsed JSON record. Raise on MCP isError; never supply an API key here.
+gateway = await start_keydesk_gateway(FileTraceStore('var/traces'), credential_id, invoke)
+request = ModelRequest(gateway.route, (ContentBlock.text_block('Convert 1.25 litres to millilitres.'),), max_output_tokens=256)
+result = await AgentRuntime(gateway, ToolRegistry(), request).run()
+```
+
+For an agent with the Key Desk plugin, this POSIX smoke harness supplies a
+JSON-lines bridge:
+
+```bash
+umask 077
+python -m membraneclaw_runtime.tracing.keydesk_smoke --credential-id YOUR_CREDENTIAL_ID
+```
+
+The harness prints an episode key, then a `gemini_call` argument object. The
+agent must call that exact tool with those arguments and write the MCP result
+as one JSON line to stdin. It never asks for the key. This is not a standalone
+unauthenticated HTTP client. On success it reopens the trace, checks exact raw
+response bytes, exports a private bundle, restores it to a different directory,
+and performs execution replay with network connection creation blocked. The
+report and private ZIP are under `var/traces/keydesk-live/` (ignored by Git).
+
+Before the external call, `attempt.started` and `keydesk.requested` are durable.
+The latter records the remote request ID for reconciliation after timeouts or
+cancellation. Retries are disabled. A `pending` or `unknown` remote result must
+be inspected with `gemini_trace` using the recorded ID, never silently retried
+with a fresh ID. Automatic reconciliation/resumption is not implemented.
+
+Capture boundary: the exact generated UTF-8 JSON request body and the complete
+safe UTF-8 response body returned by Key Desk, including unknown JSON fields,
+usage and opaque signatures. Google's response headers, compressed wire bytes,
+and partial remote responses are not available through this relay. The
+`x-keydesk-request-id` response metadata is generated locally, not a Google
+header. Key Desk's own record is a separate server-side durable copy; this bridge
+does not replace the pluggable file/JSON trace store with a database.
+
+Verified on 2026-11-10 UTC: a real request returned `1250` (18 input + 4 output
+= 22 tokens), persisted 8 events, matched the remote raw response exactly, and
+passed export → restore → network-free execution replay. The live request ID
+was `7cf4081d01a445d6b62977793afe9c91`. No private bundle or credential is committed.
+Regression tests cover commit-before-send, response persistence failure,
+request mismatch, unknown outcomes, cancellation, timeout, 429/no retry,
+UTF-16 input bounds, reopening, export/restore and execution replay.
