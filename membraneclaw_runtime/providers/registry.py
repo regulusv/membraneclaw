@@ -35,8 +35,10 @@ def default_registry():
     from .gemini import GeminiAdapter
     from .openai import OpenAIAdapter
     from .anthropic import AnthropicAdapter
+    from .keydesk import KeyDeskGeminiAdapter
     registry = ProviderRegistry()
     registry.register("gemini", GeminiAdapter)
+    registry.register("gemini_keydesk", KeyDeskGeminiAdapter)
     registry.register("openai", OpenAIAdapter)
     registry.register("anthropic", AnthropicAdapter)
     return registry

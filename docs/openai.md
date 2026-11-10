@@ -1,6 +1,6 @@
 # OpenAI Responses provider
 
-Use `membraneclaw --provider openai --model o4-mini-2025-04-16 --no-mcp "Calculate 2+2"` with `OPENAI_API_KEY` set. The other reviewed profile is `gpt-4.1-2025-04-14`; these are explicit compatibility profiles, not a latest-model recommendation. Unsupported models/options fail before a request. Qwen remains the default.
+Use `membraneclaw --provider openai --model o4-mini-2025-04-16 --no-mcp -p "Calculate 2+2"` with `OPENAI_API_KEY` set. The other reviewed profile is `gpt-4.1-2025-04-14`; these are explicit compatibility profiles, not a latest-model recommendation. Unsupported models/options fail before a request. Qwen remains the default.
 
 The adapter uses the Responses REST API through the same byte-capturing HTTP transport as Gemini. There is no SDK, automatic retry, redirect, or automatic tool execution. Gateway retries remain separately recorded attempts. `store=false` and explicit local input/output history avoid relying on an unrecorded remote conversation. All output items, unknown fields, call IDs, and reasoning encrypted content remain in private native state. Function schemas are sent with `strict=false`; local JSON Schema validation enforces constraints without rewriting optional properties. Tools unsupported by this implementation (including hosted tools) are rejected.
 

@@ -110,7 +110,7 @@ async def execute_replay(store,episode):
     from ..providers.types import NativeRequest
     content=tuple(ContentBlock(**b) for b in initial["content"])
     request=ModelRequest(route,content,initial["system_instruction"],registry.definitions())
-    if route.provider=="gemini":
+    if route.provider in {"gemini", "gemini_keydesk"}:
         cfg=native.get("generationConfig",{})
         request=replace(request,temperature=cfg.get("temperature"),max_output_tokens=cfg.get("maxOutputTokens"),
                         provider_options={"gemini":{"thinkingConfig":cfg["thinkingConfig"]}} if "thinkingConfig" in cfg else {})

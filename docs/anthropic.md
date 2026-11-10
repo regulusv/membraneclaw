@@ -1,6 +1,6 @@
 # Anthropic Messages provider
 
-Set `ANTHROPIC_API_KEY`, then run `membraneclaw --provider anthropic --model claude-sonnet-4-20250514 --no-mcp "Calculate 2+2"`. This explicit compatibility profile is not a claim about the latest available model. Other models fail before network I/O. The REST transport fixes `anthropic-version: 2023-06-01`; no SDK, implicit retries, redirects or tool runner is involved.
+Set `ANTHROPIC_API_KEY`, then run `membraneclaw --provider anthropic --model claude-sonnet-4-20250514 --no-mcp -p "Calculate 2+2"`. This explicit compatibility profile is not a claim about the latest available model. Other models fail before network I/O. The REST transport fixes `anthropic-version: 2023-06-01`; no SDK, implicit retries, redirects or tool runner is involved.
 
 Every assistant content block is preserved in native history, including thinking signatures, redacted thinking and unknown block fields. Tool results follow tool_use order even if submitted in reverse order, and preserve is_error. Hosted tool configuration is rejected; unknown server tool blocks cannot trigger local execution or successful completion. Missing usage stays unknown. Inclusive normalized input tokens explicitly add input_tokens + cache_read_input_tokens + cache_creation_input_tokens; the raw breakdown remains available.
 
