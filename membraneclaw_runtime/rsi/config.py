@@ -11,13 +11,15 @@ from .versions import validate_assets
 def source_snapshot():
     root = Path(__file__).resolve().parents[1]
     return {p.relative_to(root).as_posix():p.read_bytes().decode("utf-8")
-            for folder in (root/'rsi',root/'tracing') for p in sorted(folder.glob('*.py'))}
+            for folder in (root,root/'rsi',root/'tracing',root/'providers') for p in sorted(folder.glob('*.py'))}
 
 
 def verify_spec(spec):
     fields(spec,"schema mode purpose source inputs config config_digest dataset_digest components compiler parent")
-    if (spec["schema"] != 1 or type(spec["schema"]) is not int or spec["mode"] != "synthetic_offline"
-        or spec["purpose"] not in {"search","final_test"} or spec["components"] != IDENTITIES
+    from .live import IDENTITIES as LIVE_IDENTITIES
+    identities = LIVE_IDENTITIES if spec['mode'] == 'live_gemini' else IDENTITIES
+    if (spec["schema"] != 1 or type(spec["schema"]) is not int or spec["mode"] not in {"synthetic_offline", "live_gemini"}
+        or spec["purpose"] not in {"search","final_test"} or spec["components"] != identities
         or spec["compiler"] != "compile_agent_v1"):
         raise Invalid("unsupported run/component/compiler version")
     if spec["config_digest"] != hashed(spec["config"]) or spec["dataset_digest"] != hashed(spec["inputs"]):
@@ -26,7 +28,7 @@ def verify_spec(spec):
         raise Invalid("source snapshot mismatch")
     cfg = spec["config"]
     fields(cfg,"schema mode max_rounds seeds allowed_assets limits policy assets tasks references")
-    if cfg["schema"] != 1 or type(cfg["schema"]) is not int or cfg["mode"] != "synthetic_offline":raise Invalid("unsupported configuration")
+    if cfg["schema"] != 1 or type(cfg["schema"]) is not int or cfg["mode"] != spec['mode']:raise Invalid("unsupported configuration")
     integer(cfg["max_rounds"],1)
     if type(cfg["seeds"]) is not list or not cfg["seeds"]:raise Invalid("seeds required")
     for seed in cfg["seeds"]:integer(seed)

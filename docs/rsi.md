@@ -1,5 +1,9 @@
 # Offline RSI controller
 
+For real Gemini Solver/Proposer calls through this Controller, native runtime,
+and native tracing, see [Native live RSI](rsi-native-live.md). The `demo` and
+offline configurations described below retain their synthetic behavior.
+
 This implementation runs a **synthetic offline orchestration experiment**. It does not call a model, train model weights, run WaterTAP or demonstrate improved real-agent performance. The recorded scores are computed by a deterministic fixture Evaluator from actual fixture Solver outputs and private expected values.
 
 ## Install and run

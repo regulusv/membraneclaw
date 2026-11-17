@@ -1,5 +1,8 @@
 # Trace Recording User Guide
 
+RSI integration: [run real Gemini Solver/Proposer calls and verify their native
+traces](docs/rsi-native-live.md).
+
 This feature records the **model requests, model responses, tool arguments, tool results, and application state** for each task. Each task has an `episode_id`. Use that ID to inspect the original data, validate its integrity, export it, replay it offline, and archive it to a private Git repository.
 
 “Complete” means complete within the application's observable capture boundary. Hidden model state is outside that boundary. Data the API did not return, or a remote result the application never received, cannot be reconstructed. The legacy Qwen path remains available but does not automatically provide these recording guarantees.

@@ -58,7 +58,7 @@ def main(argv=None):
     subs = parser.add_subparsers(dest='command',required=True)
     sub = subs.add_parser('init-example',help='export editable synthetic fixtures to a new directory')
     sub.add_argument('--output',required=True)
-    for command in ('demo','run'):
+    for command in ('demo','run','live-run'):
         sub = subs.add_parser(command);sub.add_argument('--output',required=True)
         if command == 'run':sub.add_argument('--config',required=True)
     for command in ('resume','inspect','verify','report','final-evaluate'):
@@ -74,8 +74,12 @@ def main(argv=None):
         if args.command == 'init-example':
             print(json.dumps(init_example(args.output),indent=2))
             return 0
-        if args.command in {'demo','run'}:
-            spec = demo_spec() if args.command == 'demo' else load_config(args.config)
+        if args.command in {'demo','run','live-run'}:
+            if args.command == 'live-run':
+                from .live import live_spec
+                spec = live_spec()
+            else:
+                spec = demo_spec() if args.command == 'demo' else load_config(args.config)
             with Journal(args.output,spec=spec) as journal:
                 asyncio.run(Controller(journal).run());result = write_reports(journal)
         elif args.command == 'final-evaluate':

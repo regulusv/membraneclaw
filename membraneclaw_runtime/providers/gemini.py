@@ -67,6 +67,8 @@ class GeminiAdapter:
     MODELS = {"gemini-2.5-flash"}  # Reviewed profile, not a latest-model claim.
 
     def capabilities(self, model):
+        if model == 'gemini-3.1-flash-lite':
+            return Capabilities(tool_calling=False, parallel_calls=False)
         if model not in self.MODELS:
             raise ConfigurationError("model has no reviewed Gemini capability profile")
         return Capabilities(reasoning_options=("thinkingBudget", "includeThoughts"))
@@ -99,8 +101,12 @@ class GeminiAdapter:
         if not isinstance(options, dict) or set(options) - {"gemini"}:
             raise ConfigurationError("provider options require the gemini namespace")
         gemini = options.get("gemini", {})
-        if not isinstance(gemini, dict) or set(gemini) - {"thinkingConfig"}:
+        if not isinstance(gemini, dict) or set(gemini) - {"thinkingConfig", "candidateCount"}:
             raise ConfigurationError("unsupported Gemini option")
+        if 'candidateCount' in gemini and (type(gemini['candidateCount']) is not int or gemini['candidateCount'] != 1):
+            raise ConfigurationError('only candidateCount=1 is supported')
+        if request.route.model == 'gemini-3.1-flash-lite' and (request.tools or gemini.get('thinkingConfig')):
+            raise ConfigurationError('flash-lite profile supports text-only requests without reasoning options')
         thinking = gemini.get("thinkingConfig", {})
         if not isinstance(thinking, dict) or set(thinking) - {"thinkingBudget", "includeThoughts"}:
             raise ConfigurationError("unsupported Gemini reasoning option")
@@ -146,6 +152,8 @@ class GeminiAdapter:
                       "maxOutputTokens": request.max_output_tokens}.items() if v is not None}
         if thinking:
             generation["thinkingConfig"] = copy.deepcopy(thinking)
+        if 'candidateCount' in gemini:
+            generation['candidateCount'] = gemini['candidateCount']
         if generation:
             body["generationConfig"] = generation
         return NativeRequest(request.route, "POST", f"/v1beta/models/{request.route.model}:generateContent",

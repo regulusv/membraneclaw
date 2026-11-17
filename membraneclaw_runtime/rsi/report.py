@@ -73,7 +73,11 @@ def verify(journal):
     if state['incumbent'] != selected:raise Invalid('incumbent not supported by decisions')
     if state['status'] == 'completed' and journal.spec['purpose'] == 'search' and len(state['decisions']) != journal.spec['config']['max_rounds']:raise Invalid('incomplete completed search')
     if journal.spec['purpose'] == 'final_test' and state['decisions']:raise Invalid('final evaluation cannot mutate search policy')
-    return {'valid':True,'segments':len(journal.chain),'operations':len(state['operations'])}
+    result = {'valid':True,'segments':len(journal.chain),'operations':len(state['operations'])}
+    if journal.spec['mode'] == 'live_gemini':
+        from .live import verify_model_links
+        result['model_traces'] = verify_model_links(journal)
+    return result
 
 
 def summary(journal):
@@ -112,6 +116,12 @@ def summary(journal):
                 label:sum(evaluated[(vid,task,seed)] for task,seed in keys)/len(keys)
                 for label,vid in [('initial_mean',state['initial']),('selected_mean',state['incumbent'])]}
     if journal.spec['parent']:result['parent_record'] = journal.spec['parent']['record']
+    if journal.spec['mode'] == 'live_gemini':
+        traces = validation['model_traces']
+        result.update(synthetic_only=False, synthetic_tasks=True, native_runtime_exercised=True,
+                      actual_model_tokens=sum(t['tokens_observed'] for t in traces),
+                      model_usage_unknown=any(t['usage_unknown'] for t in traces),
+                      model_traces=traces, transport='key_desk_bridge', ledger_unit='component_operations')
     if 'final_evaluation' in state:
         result['final_evaluation'] = [{k:r[k] for k in ('task_id','seed','status','score','scale')} for r in state['final_evaluation']]
         # Final metrics are part of semantic identity too.
@@ -134,6 +144,11 @@ def markdown(report):
               f"Linked search + final-evaluation ledger: `{json.dumps(report['linked_total_ledger'],sort_keys=True)}`.",
               f"Unknown operations: {len(report['unknown_operations'])}.",
               f"Semantic digest: `{report['semantic_digest']}`.",f"Record digest: `{report['record_digest']}`."]
+    if report['mode'] == 'live_gemini':
+        lines[0] = '# Native runtime live RSI report'
+        lines[2] = '**Real Gemini calls through Key Desk; synthetic tasks and deterministic evaluation. No capability improvement claim.**'
+        lines = [line.replace('Synthetic ledger:', 'Component-operation ledger:') for line in lines]
+        lines += ['', f"Observed model tokens: {report['actual_model_tokens']}; usage unknown: {report['model_usage_unknown']}."]
     return '\n'.join(lines)+'\n'
 
 

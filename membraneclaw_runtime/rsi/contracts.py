@@ -127,6 +127,10 @@ def validate_result(kind, value, request):
     expected = {"solve": "operation_id version_id task_id seed status answer units",
                 "evaluate": "operation_id version_id task_id seed status score scale units",
                 "propose": "operation_id parent_version edits rationale evidence_digest units"}[kind]
+    if type(value) is dict and 'model_trace' in value and kind in {'solve','propose'}:
+        fields(value['model_trace'], 'episode head')
+        if any(type(v) is not str or not v for v in value['model_trace'].values()):raise Invalid('invalid model trace')
+        expected += ' model_trace'
     fields(value, expected)
     if value["operation_id"] != request.operation_id:
         raise Invalid("operation identity mismatch")

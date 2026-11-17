@@ -33,9 +33,16 @@ class Controller:
         self.elapsed_anchor = max(journal.state.get('elapsed_floor',0), max(0,clock()-started) if started is not None else 0)
         self.components = {"solve":solver or FixtureSolver(),"propose":proposer or FixtureProposer(),
                            "evaluate":evaluator or FixtureEvaluator(self.spec['inputs']['references'])}
+        live = self.spec['mode'] == 'live_gemini'
+        if live:
+            if recompute:raise Invalid('live calls cannot be recomputed')
+            from .live import LiveSolver, LiveProposer
+            self.components['solve'] = solver or LiveSolver(journal)
+            self.components['propose'] = proposer or LiveProposer(journal)
         for name,component in self.components.items():
             role = {"solve":"solver","propose":"proposer","evaluate":"evaluator"}[name]
-            if (component.identity != self.spec['components'][role] or component.offline_pure is not True
+            expected_pure = not live or name == 'evaluate'
+            if (component.identity != self.spec['components'][role] or component.offline_pure is not expected_pure
                 or type(component.bound) is not int or component.bound < 1):raise Invalid("unapproved offline adapter")
 
     def elapsed(self, state):
@@ -96,6 +103,9 @@ class Controller:
             except Exception as error:
                 raw = {'exception_type':type(error).__name__};evidence_kind = 'exception'
             self.j.fault('operation.returned_before_capture')
+            # Live components commit the child-episode link before dispatch.
+            # Refresh so capturing the result cannot overwrite that durable link.
+            state = self.state();op = state['operations'][opid]
             # Raw evidence is committed even if the returned JSON has NaN,
             # mismatched IDs, or an invalid schema. It is not a valid outcome yet.
             body = json.dumps(normalize(raw),ensure_ascii=True,allow_nan=True,
